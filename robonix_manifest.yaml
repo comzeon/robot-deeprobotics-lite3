@@ -1,21 +1,118 @@
 manifestVersion: 1
 name: robot-deeprobotics-lite3
+
+# §1 catalog marker — required for community hardware package release.
+catalog:
+  name: DeepRobotics Lite3 (Explorer)
+  version: 0.2.0
+  description: >
+    DeepRobotics Jueying Lite3 quadruped (Explorer SKU) deployment: direct UDP
+    bridge to the Motion Host (no transfer-node hop), RGB-D perception via an
+    external Orbbec Gemini 335 on eth1, mapping + Nav2 + frontier exploration.
+  license: MulanPSL-2.0
+  tags: [quadruped, legged, deeprobotics, lite3, rgbd, nav2]
+  maintainers:
+    - name: syswonder
+      email: dev@syswonder.org
+
+# ROS 2 RMW environment for the runtime.
+env:
+  ROS_DOMAIN_ID: "0"
+  RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+
+# ── primitives (booted after the system layer) ──────────────────────────────
 primitive:
-- config:
-    cmd_port: 43893
-    robot_ip: 192.168.2.1
-    state_port: 43897
-  name: lite3_chassis
-  path: ./primitives/lite3_chassis
-- config:
-    rtsp_url: rtsp://192.168.2.1:8554/test
-  name: lite3_camera
-  path: ./primitives/lite3_camera
+  - name: lite3_chassis
+    path: ./primitives/lite3_chassis
+    config:
+      # DeepRobotics factory topology: motion host 192.168.1.1, SDK/perception
+      # host 192.168.1.120. Commands → :43893, telemetry ← :43897 (ADR-0001).
+      robot_ip: 192.168.1.1
+      cmd_port: 43893
+      state_port: 43897
+      base_frame: base_link
+      odom_topic: /odom
+      cmd_vel_topic: /cmd_vel
+
+  # Single URDF + TF publisher (onboarding §3.1): odom→base_link→head_camera_*.
+  - name: robot_description
+    url: https://github.com/syswonder/primitive-robot-description-rbnx
+    branch: main
+    config:
+      urdf_path: urdf/Lite3.urdf
+      # TF chain the motion/nav/scene stack consumes.
+      odom_frame: odom
+      base_frame: base_link
+      publish_odom_to_base: true   # odom→base_link (leg odometry from chassis)
+
+  - name: lite3_camera
+    path: ./primitives/lite3_camera
+    config:
+      # External Orbbec Gemini 335 on eth1. The vendor `orbbec_camera` driver
+      # MUST be started before `rbnx boot` (ADR-0002). Defaults follow the
+      # orbbec_camera launch topics.
+      rgb_topic: /camera/color/image_raw
+      depth_topic: /camera/depth/image_rect_raw
+      camera_info_topic: /camera/color/camera_info
+      # Deployment-provided intrinsics fallback (used only until live CameraInfo
+      # arrives). Fill with the calibrated Gemini 335 K for the deployment unit.
+      width: 640
+      height: 480
+      fx: 0.0
+      fy: 0.0
+      cx: 0.0
+      cy: 0.0
+      base_frame: base_link
+      cam_frame: head_camera_rgb_optical_frame
+      # First-frame sentinel: the Orbbec driver is racy on cold boot.
+      sentinel_timeout_s: 150
+
+# ── services (booted after primitives) ───────────────────────────────────────
 service:
-- config:
-    backend: sqlite
-  name: memory
-  path: ${ROBONIX_SOURCE_PATH}/services/memsearch
+  - name: memory
+    path: ${ROBONIX_SOURCE_PATH}/services/memsearch
+    config:
+      backend: sqlite
+
+  # Mapping publishes the occupancy / point cloud / pose contracts consumed by
+  # Navigation and Scene. RGB-D + leg odom (ADR-0002); Lite3 has no lidar.
+  - name: mapping
+    url: https://github.com/syswonder/service-map-rbnx
+    branch: main
+    config:
+      # Lite3 carries no planar lidar; occupancy comes from registered depth.
+      occupancy_sources: [depth]
+      rtabmap_inputs: [rgbd, odom]
+      params_file: config/rtabmap_params.yaml
+      sensor_providers:
+        rgb: lite3_camera
+        depth: lite3_camera
+        odom: lite3_chassis
+
+  # Nav2 wrapper — discovers /map (mapping), /odom (chassis), RGB (camera) through
+  # atlas and drives /cmd_vel via the navigate_to_pose action. Lite3 has no
+  # /scan; costmaps use depth-derived obstacles, not a lidar scan.
+  - name: nav2
+    url: https://github.com/syswonder/service-navigation-rbnx
+    branch: main
+    config:
+      params_file: config/nav2_params.yaml
+      action_wait_s: 240.0
+      provider_ids:
+        map: mapping
+        odom: lite3_chassis
+        # No lidar scan provider; nav2_params must be tuned for depth obstacles.
+
+# ── skills (registered but not auto-activated) ──────────────────────────────
+skill:
+  - name: explore
+    url: https://github.com/syswonder/skill-explore-rbnx
+    branch: main
+    config:
+      explore_mode: frontier
+      timeout_s: 600
+
+# ── system layer ─────────────────────────────────────────────────────────────
 system:
   atlas:
     listen: 0.0.0.0:50051
@@ -34,3 +131,6 @@ system:
       api_key: ${VLM_API_KEY}
       model: ${VLM_MODEL}
       upstream: ${VLM_BASE_URL}
+  scene:
+    log: info
+    camera_frame: head_camera_rgb_optical_frame

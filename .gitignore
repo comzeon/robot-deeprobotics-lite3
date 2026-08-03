@@ -3,3 +3,8 @@ rbnx-boot/
 __pycache__/
 *.pyc
 .venv/
+# Runtime logs and editor/backup artifacts must not be committed.
+logs/
+*.log
+*.bak
+*.swp

@@ -1,0 +1,117 @@
+# robot-deeprobotics-lite3 接入完整性检查与修复 TODO List
+
+审查依据：[Robonix 本体接入指南](https://robonix-book.syswonder.org/integration-guide/vendor-onboarding)（§1 catalog / §3.1 URDF·TF / §3.2 provider_id / §4.2 RBNX_INSTANCE_NAME·config.spec / §4.4 能力须由代码声明 / §5 服务接线 / §6.1 odom·TF / §7 验收 / §8 社区包元数据）
+协议参照：云深处开源 [`DeepRoboticsLab/Lite3_ROS`](https://github.com/DeepRoboticsLab/Lite3_ROS) 的 `protocol.hpp`/`Jetson2Motion.cpp`，并对照独立实现 [`automatika-robotics/emos-plugin-lite3`](https://github.com/automatika-robotics/emos-plugin-lite3)（`ctypes _pack_=4`，与 C 结构逐字段一致）。
+架构决策：见 `docs/adr/0001-0003`；术语见 `CONTEXT.md`。
+
+> 本轮已完成 P0–P4 全部条目。**协议层正确性经字节布局核对**（ctypes 结构尺寸与官方一致：RobotStateReceived=212B / JointStateReceived=108B / HandleStateReceived=60B / SimpleCMD=12B / ComplexCMD=20B），**未做实机抓包**——实机 UDP 协议验证请在 `100.72.167.58` 上 `rbnx boot` 后用 `ros2 topic echo /odom` 确认（决策时该主机仅密码登录，我无法非交互登录）。
+
+---
+
+## P0 — 关键正确性（底盘驱动按官方协议重写）✅
+
+### 1. 底盘状态帧过滤码 / 帧分派 — 已修复 ✅
+- [x] 改用 ctypes `_pack_=4` 结构逐字节镜像 `protocol.hpp`（`RobotStateReceived`/`JointStateReceived`/`HandleStateReceived`/`ImuDataReceived`）。
+- [x] `udp_loop` 按包长 + `code`（2305/2306/2309/0x010901）分派，等价 C++ 的 `switch(recv_num_)`；同时兼容较新固件 4 字节更大的 `RobotStateReceivedWithPolicy` 布局。
+- [x] 移除错误常量 `CMD_ROBOT_DATA = 0x00000906`。→ ADR-0001
+
+### 2. 状态负载布局 — 已修复 ✅
+- [x] `RobotState` 按官方字段解析：`rpy/rpy_vel/xyz_acc/pos_world[3]`/`vel_world/vel_body/battery_level/ultrasound[2]`。
+- [x] `odom` 取 `pos_world[0]`(x)、`pos_world[1]`(y)、`pos_world[2]`（yaw, rad）+ `vel_body` 速度项，`/odom`(nav_msgs/Odometry) 已发布。
+- [x] 前后超声波 `ultrasound[0]/[1]` 发布为 `/ultrasound/front`、`/ultrasound/rear`（sensor_msgs/Range）。
+
+### 3. 命令格式 — 已修复 ✅
+- [x] 改发官方 `MotionComplexCMD`（`SimpleCMD`+double）到 `:43893`；速度为三包，`cmd_code` 320(vx)/325(vy)/321(wz)，yaw 按桥约定取负。
+- [x] `move` rpc 与 `/cmd_vel` 转为 vx/vy/wz；删除发送 240B 全零关节位姿的危险路径。→ ADR-0003
+- [x] 安全边界：无速度输入 0.5s 即发零速；不发包时运动主机自停（与官方 `transfer` 一致），**不发 keep-alive**。
+
+### 4. 网络默认值 — 已修复 ✅
+- [x] 采用官方默认：运动主机 `192.168.1.1`，感知主机 `192.168.1.120`，`cmd_port 43893`，`state_port 43897`；写入 README “硬件 & 网络”表。RTSP 路径已移除（改用奥比中光 RGB-D）。
+
+---
+
+## P1 — 能力声明须由代码声明 (§4.4) ✅
+
+### 5. `robonix/primitive/chassis/move` gRPC 处理 ✅
+- [x] 用 `@lite3.grpc("robonix/primitive/chassis/move")` 绑定 `move()`，import `chassis_pb2`/`std_msgs_pb2`，按 `MoveCommand` 速度字段执行。
+
+### 6. `odom` / `twist_in` 数据面 ✅
+- [x] `init` 中 `create_publisher` 发布 `/odom`，`create_subscription` 订阅 `/cmd_vel`（`_on_cmd_vel`）。
+- [x] manifest 新增 `env:` 块（`ROS_DOMAIN_ID`/`RMW_IMPLEMENTATION`），运行时 RMW 一致化。
+
+### 7. `robonix/primitive/camera/snapshot` MCP 工具 ✅
+- [x] `lite3_camera` 用 `@lite3_cam.mcp("...snapshot")`/`...depth_snapshot` 绑定，返回 `sensor_msgs_mcp.Image`。
+- [x] `rgb`/`depth` 改为真订阅 `create_subscription`（从奥比中光 `orbbec_camera` 驱动桥接）；package_manifest 能力清单与实现对齐（含 intrinsics/extrinsics/driver）。
+
+### 8. 提供方 ID 使用 `RBNX_INSTANCE_NAME` ✅
+- [x] 两原语均 `Primitive(id=os.environ.get("RBNX_INSTANCE_NAME", ...))`。
+
+---
+
+## P2 — soma 声明与清单接线 (§3.2 / §5) ✅
+
+### 9. `exports[].provider_id` 与清单一致 ✅
+- [x] soma 导出改为 `nav2` / `explore`，逐字等于 manifest 实例名；删除原 `lite3_nav2`/`skill_explore`/`lite3_audio` 引用。
+
+### 10. 建图/导航服务接线 ✅
+- [x] manifest 新增 `service.mapping`（`rtabmap_inputs:[rgbd,odom]`、`occupancy_sources:[depth]`、`sensor_providers: {rgb: lite3_camera, depth: lite3_camera, odom: lite3_chassis}`）。
+- [x] manifest 新增 `service.nav2`（`provider_ids: {map: mapping, odom: lite3_chassis}`）。
+- [x] 无 lidar 前提写进 soma `cannot_do` 与 README、nav2_params 注释。→ ADR-0002
+
+### 11. `robot_description` / TF 发布方 ✅
+- [x] manifest 新增 `primitive.robot_description`（`primitive-robot-description-rbnx`），由底盘 `/odom` 提供 odom→base_link。
+- [x] URDF 新增 `base_link`→`TORSO` 固定关节，补 `head_camera_*`/`ultrasonic_*` link，TF 树连通（已用 ElementTree 校验 23 link）。
+
+### 12. 音频能力 ✅
+- [x] 从 soma / manifest 删除 `audio` 组件与 `lite3_audio` 导出；`cannot_do` 写明“未部署音频”。
+- [x] `head_camera` 的 `urdf_link` 改为 `head_camera_rgb_optical_frame`（URDF 真实光学坐标系）。
+
+---
+
+## P3 — URDF / 传感器完整性 (§3.1) ✅
+
+### 13. URDF 传感器坐标树 ✅
+- [x] 新增 `head_camera_link`/`head_camera_rgb_optical_frame`/`head_camera_depth_optical_frame`、`ultrasonic_front_link`/`ultrasonic_rear_link`（均固定到 `TORSO`，含 6DOF 安装位姿估计；README 提示实机核对）。
+
+### 14. soma 部件树 / `cannot_do` ✅
+- [x] `head_camera`(type `rgbd_camera`) + 前后 `range_sensor` 部件；`cannot_do` 增列无 lidar、无深度(已加)、单目(已被 RGB-D 取代)、速度-only、音频未部署、leg-odom 漂移。
+
+---
+
+## P4 — 打包卫生与发布 (§1/§2/§8) ✅
+
+### 15. `catalog:` 元数据块 ✅
+- [x] manifest 顶部补 `catalog:`（name/version/description/license/tags/maintainers）。
+
+### 16. `config.spec` / 元数据 ✅
+- [x] 两 package_manifest 补 `tags`/`maintainers`/`vendor`/`version`；`config.spec` 列全 `robot_ip/cmd_port/state_port/...` 与 `rgb_topic/depth_topic/camera_info_topic/fx...`。
+
+### 17. README 与启动脚本 ✅
+- [x] 新增 `README.md`：平台/硬件/网络/坐标系/安全边界/构建启动流程。
+- [x] `start.sh` 移除裸 `$HOME/Desktop/robonix` 兜底：不存在则明确报错并指引 `rbnx setup`/导出 `ROBONIX_SOURCE_PATH`。
+
+### 18. 运行时/临时产物 ✅
+- [x] `git rm` 已跟踪的 `driver.py.bak`、`primitives/*/logs/*.log`（4 项）；`.gitignore` 增补 `logs/`/`*.log`/`*.bak`/`*.swp`。
+
+### 19. 启动脚本硬编码 — 见 #17 ✅
+
+---
+
+## 待你在实机上验证（我无法非交互登录）
+
+```bash
+# 在 100.72.167.58 (~/Desktop/robonix) 上：
+rbnx validate ./primitives/lite3_chassis
+rbnx build -f robonix_manifest.yaml   # 期望 Failed:0 / Skipped:0 / Built==Total
+rbnx boot -f robonix_manifest.yaml
+rbnx caps -v                            # 期望 lite3_chassis/lite3_camera/robot_description 为 ACTIVE
+ros2 topic echo /odom --once            # 确认 RobotState 帧解析（协议层唯一真值验证）
+ros2 topic echo /ultrasound/front --once
+# 协议若不通：核对运动主机 IP/网段、确认感知主机 43897 未被官方 transfer 占用。
+```
+
+## 遗留未决（需你决定后我可继续）
+
+- URDF 传感器安装位姿为**估计值**（camera +x0.18/+z0.18，超声波 ±0.25）；实机量测后回填。
+- 奥比中光 Gemini 335 的 `orbbec_camera` 启动方式（systemd / launch）需你定；README 已要求 boot 前先起。
+- `rtabmap_params.yaml` 暂未针对单目深度+无激光做完整 RTAB-Map 调参，建议实机建图后迭代。

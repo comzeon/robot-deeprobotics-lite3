@@ -1,14 +1,61 @@
 manifestVersion: 1
 package:
   name: com.robonix.deeprobotics.lite3_camera
-  version: 0.1.0
-  vendor: deeprobotics
-  description: Lite3 camera primitive — RTSP snapshot from onboard USB camera.
+  version: 0.2.0
+  vendor: syswonder <dev@syswonder.org>
+  description: >
+    Lite3 camera primitive — RGB-D topic bridge for an external Orbbec Gemini 335
+    on eth1. Bridges an already-running orbbec_camera driver's RGB + depth +
+    CameraInfo into robonix contracts, publishes latched intrinsics/extrinsics,
+    and provides JPEG snapshot + depth_snapshot MCP tools. Does NOT spawn the
+    vendor driver. See ADR-0002.
   license: MulanPSL-2.0
+  tags: [camera, rgbd, orbbec, deeprobotics, lite3]
+  maintainers:
+    - name: syswonder
+      email: dev@syswonder.org
+
 build: bash scripts/build.sh
 start: bash scripts/start.sh
 stop: pkill -TERM -f "[l]ite3_camera" 2>/dev/null || true
+
 capabilities:
   - name: robonix/primitive/camera/snapshot
-  - name: robonix/primitive/camera/driver
+  - name: robonix/primitive/camera/depth_snapshot
   - name: robonix/primitive/camera/rgb
+  - name: robonix/primitive/camera/depth
+  - name: robonix/primitive/camera/intrinsics
+  - name: robonix/primitive/camera/extrinsics
+  - name: robonix/primitive/camera/driver
+
+config.spec:
+  rgb_topic:
+    type: string
+    default: /camera/color/image_raw
+    description: "Orbbec color image topic (sensor_msgs/Image)."
+  depth_topic:
+    type: string
+    default: /camera/depth/image_rect_raw
+    description: "Orbbec depth image topic (sensor_msgs/Image)."
+  camera_info_topic:
+    type: string
+    default: /camera/color/camera_info
+    description: "Orbbec CameraInfo topic; preferred intrinsics source."
+  base_frame:
+    type: string
+    default: base_link
+    description: "TF parent for the head camera extrinsics lookup."
+  cam_frame:
+    type: string
+    default: head_camera_rgb_optical_frame
+    description: "RGB optical frame; must exist in the URDF sensor tree."
+  width: { type: int, default: 640, description: "Image width for fallback intrinsics." }
+  height: { type: int, default: 480, description: "Image height for fallback intrinsics." }
+  fx: { type: float, default: 0.0, description: "Fallback intrinsics fx (px); 0 ⇒ rely on camera_info." }
+  fy: { type: float, default: 0.0, description: "Fallback intrinsics fy (px)." }
+  cx: { type: float, default: 0.0, description: "Fallback intrinsics cx (px)." }
+  cy: { type: float, default: 0.0, description: "Fallback intrinsics cy (px)." }
+  sentinel_timeout_s:
+    type: float
+    default: 150.0
+    description: "Seconds `init` waits for the first RGB frame before failing."

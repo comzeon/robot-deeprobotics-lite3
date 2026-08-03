@@ -1,16 +1,16 @@
 urdf:
   path: ./urdf/Lite3.urdf
-  root_link: TORSO
+  root_link: base_link
   model_name: lite3
 
 robot:
   id: lite3_01
-  display_name: "DeepRobotics Lite3 quadruped robot"
+  display_name: "DeepRobotics Lite3 (Explorer)"
   family: mobile_robot
   root_part: base
   dimensions: { length_m: 0.55, width_m: 0.27, height_m: 0.42 }
   footprint:
-    base_frame: TORSO
+    base_frame: base_link
     points:
       - [0.25, 0.12]
       - [0.25, -0.12]
@@ -19,26 +19,28 @@ robot:
   mass_kg: 12.0
   passable_door_width_m: 0.60
   exports:
-    - provider_id: lite3_nav2
+    # provider_id must equal a manifest instance name (onboarding §3.2).
+    - provider_id: nav2
       capabilities:
         - { path: robonix/service/navigation/navigate, description: "Navigate to a 2D goal in the mapped scene." }
         - { path: robonix/service/navigation/navigate/status, description: "Report the current navigation goal status." }
         - { path: robonix/service/navigation/navigate/cancel, description: "Cancel the active navigation goal." }
-    - provider_id: skill_explore
+    - provider_id: explore
       capabilities:
         - { path: robonix/skill/explore/explore, description: "Run autonomous frontier exploration." }
         - { path: robonix/skill/explore/explore/status, description: "Report current exploration status." }
         - { path: robonix/skill/explore/explore/cancel, description: "Cancel active exploration task." }
+
   components:
     - id: base
       type: legged_robot
-      urdf_link: TORSO
+      urdf_link: base_link
       exports:
         - provider_id: lite3_chassis
           capabilities:
-            - { path: robonix/primitive/chassis/move, description: "Command leg motion through Lite3 UDP." }
-            - { path: robonix/primitive/chassis/odom, description: "Read odometry from leg odometry." }
-            - { path: robonix/primitive/chassis/twist_in, description: "Accept velocity commands on cmd_vel." }
+            - { path: robonix/primitive/chassis/move, description: "Command base velocity via Lite3 UDP (velocity-only)." }
+            - { path: robonix/primitive/chassis/odom, description: "Read leg odometry (nav_msgs/Odometry on /odom)." }
+            - { path: robonix/primitive/chassis/twist_in, description: "Accept velocity commands on /cmd_vel." }
             - { path: robonix/primitive/chassis/driver, description: "Lifecycle driver." }
       components:
         - id: fl_leg
@@ -57,31 +59,53 @@ robot:
           type: leg
           urdf_joint: HR_HipX_joint
           exports: []
+
+    # Single RGB-D sensing head (ADR-0002): Orbbec Gemini 335 on eth1 supplies
+    # rgb + depth + camera_info; extrinsics/intrinsics published by the primitive.
     - id: head_camera
-      type: rgb_camera
-      urdf_link: TORSO
+      type: rgbd_camera
+      urdf_link: head_camera_rgb_optical_frame
       exports:
         - provider_id: lite3_camera
           capabilities:
-            - { path: robonix/primitive/camera/snapshot, description: "Capture an RGB image from the Lite3 camera." }
-    - id: audio
-      type: audio_io
+            - { path: robonix/primitive/camera/snapshot, description: "Capture an RGB frame from the head RGB-D camera." }
+            - { path: robonix/primitive/camera/depth_snapshot, description: "Capture a depth frame from the head RGB-D camera." }
+            - { path: robonix/primitive/camera/rgb, description: "RGB image stream." }
+            - { path: robonix/primitive/camera/depth, description: "Depth image stream." }
+            - { path: robonix/primitive/camera/intrinsics, description: "Camera intrinsics (latched CameraInfo)." }
+            - { path: robonix/primitive/camera/extrinsics, description: "Camera extrinsics (latched TransformStamped)." }
+            - { path: robonix/primitive/camera/driver, description: "Lifecycle driver." }
+
+    # Front/rear ultrasonic rangefinders (Lite3 Explorer factory sensors).
+    # Telemetry/obstacle awareness only — NOT a mapping/nav2 scan input (ADR-0002).
+    - id: ultrasonic_front
+      type: range_sensor
+      urdf_link: ultrasonic_front_link
       exports:
-        - provider_id: lite3_audio
+        - provider_id: lite3_chassis
           capabilities:
-            - { path: robonix/primitive/audio/mic, description: "Stream mic from host." }
-            - { path: robonix/primitive/audio/speaker, description: "Play audio on host speaker." }
-            - { path: robonix/primitive/audio/list_devices, description: "List host audio devices." }
+            - { path: robonix/primitive/chassis/ultrasound_front, description: "Front ultrasonic distance (sensor_msgs/Range)." }
+    - id: ultrasonic_rear
+      type: range_sensor
+      urdf_link: ultrasonic_rear_link
+      exports:
+        - provider_id: lite3_chassis
+          capabilities:
+            - { path: robonix/primitive/chassis/ultrasound_rear, description: "Rear ultrasonic distance (sensor_msgs/Range)." }
 
 description:
-  summary: "A DeepRobotics Lite3 quadruped robot deployment with UDP bridge, RGB camera, mapping, navigation, and exploration."
+  summary: "A DeepRobotics Lite3 (Explorer) deployment: direct Motion-Host UDP bridge, RGB-D perception (Orbbec Gemini 335), RTAB-Map mapping, Nav2, and frontier exploration."
   can_do:
-    - "Walk using velocity commands via the Lite3 UDP protocol."
-    - "Navigate to 2D goals using SLAM and Nav2."
-    - "Capture images from the onboard USB camera."
+    - "Walk via velocity commands over the Lite3 Motion Host UDP protocol (no transfer-node hop)."
+    - "Build a 2-D occupancy map from RGB-D (RTAB-Map) and navigate to 2D goals with Nav2."
+    - "Run autonomous frontier exploration."
+    - "Capture RGB/depth frames and read front/rear ultrasonic distances."
   cannot_do:
-    - "Manipulate objects; no arm or gripper."
-    - "Use lidar; not yet deployed."
+    - "Use a planar lidar — none is deployed; occupancy comes from registered depth."
+    - "Accept pose-mode/gait/joint-position commands — move is velocity-only with hard safety limits (ADR-0003)."
+    - "Provide global-correct odometry — leg odom drifts over long distance; relocalize within mapped areas."
+    - "Audio I/O — no audio primitive is deployed."
   notes:
-    - "The Lite3 UDP bridge must be running for robot communication."
-    - "UDP ports 43893 and 43897 are used for robot control and state."
+    - "The Motion Host is reached at 192.168.1.1:43893 / telemetry 43897 (DeepRobotics factory)."
+    - "The Orbbec Gemini 335 vendor driver (orbbec_camera) must be started before `rbnx boot`."
+    - "URDF sensors (head camera + ultrasonics) are appended to the vendor body URDF; the vendor body URDF models only the quadruped."

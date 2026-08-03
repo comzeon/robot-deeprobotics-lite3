@@ -443,4 +443,98 @@
         <child link="HR_FOOT"/>
         <origin xyz="0 0 -0.21012"/>
     </joint>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         Robonix-onboarded sensors (the vendor URDF models only the quadruped body).
+         These links complete the odom→base_link→TORSO→{head_camera, ultrasonics}
+         TF tree that Scene/Nav2 require (onboarding §3.1). See ADR-0002.
+         All transforms are FIXED and are estimates — verify against the physical
+         Explorer unit and update the origins before relying on them for SLAM.
+    ═══════════════════════════════════════════════════════════════════════ -->
+
+    <!-- base_link is the robonix motion root; TORSO is the vendor body root.
+         The two are co-located so existing joint limits are unchanged. -->
+    <link name="base_link">
+        <inertial>
+            <origin/>
+            <mass value="0.001"/>
+            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+        </inertial>
+    </link>
+    <joint name="base_link_to_TORSO" type="fixed">
+        <parent link="base_link"/>
+        <child link="TORSO"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+
+    <!-- ── Head RGB-D camera (Orbbec Gemini 335 on eth1) ─────────────────── -->
+    <link name="head_camera_link">
+        <inertial>
+            <origin/>
+            <mass value="0.001"/>
+            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+        </inertial>
+    </link>
+    <joint name="TORSO_to_head_camera" type="fixed">
+        <parent link="TORSO"/>
+        <child link="head_camera_link"/>
+        <!-- mounted forward-top of the torso, lens pointing forward (+x) -->
+        <origin xyz="0.18 0 0.18" rpy="0 0 0"/>
+    </joint>
+
+    <!-- optical frame: z points forward (ROS REP-103), lens along +x body.
+         Rotation aligns optical +z with body +x. -->
+    <link name="head_camera_rgb_optical_frame">
+        <inertial>
+            <origin/>
+            <mass value="0.001"/>
+            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+        </inertial>
+    </link>
+    <joint name="head_camera_to_rgb_optical" type="fixed">
+        <parent link="head_camera_link"/>
+        <child link="head_camera_rgb_optical_frame"/>
+        <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+    </joint>
+
+    <link name="head_camera_depth_optical_frame">
+        <inertial>
+            <origin/>
+            <mass value="0.001"/>
+            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+        </inertial>
+    </link>
+    <joint name="head_camera_to_depth_optical" type="fixed">
+        <parent link="head_camera_link"/>
+        <child link="head_camera_depth_optical_frame"/>
+        <!-- depth sensor is co-located with the RGB lens on the Gemini 335 -->
+        <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+    </joint>
+
+    <!-- ── Ultrasonic rangefinders (Lite3 Explorer factory sensors) ──────── -->
+    <link name="ultrasonic_front_link">
+        <inertial>
+            <origin/>
+            <mass value="0.001"/>
+            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+        </inertial>
+    </link>
+    <joint name="TORSO_to_ultrasonic_front" type="fixed">
+        <parent link="TORSO"/>
+        <child link="ultrasonic_front_link"/>
+        <origin xyz="0.25 0 0.05" rpy="0 0 0"/>
+    </joint>
+
+    <link name="ultrasonic_rear_link">
+        <inertial>
+            <origin/>
+            <mass value="0.001"/>
+            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+        </inertial>
+    </link>
+    <joint name="TORSO_to_ultrasonic_rear" type="fixed">
+        <parent link="TORSO"/>
+        <child link="ultrasonic_rear_link"/>
+        <origin xyz="-0.25 0 0.05" rpy="3.1415927 0 0"/>
+    </joint>
 </robot>
