@@ -27,11 +27,18 @@ an **external Orbbec Gemini 335 RGB-D camera** on `eth1` to enable SLAM.
 
 ## Computing platform / dependencies
 
-- Linux (Jetson-class) perception host with ROS 2 + the robonix runtime (`rbnx`).
+- **Host (Thor):** bare L4T — runs only the robonix Rust system components.
+- `robonix_lite3_ros` docker container (built from `robonix-ros:humble-ros-base`
+  + `ros-humble-rmw-zenoh-cpp`): holds ROS 2 Humble + rclpy + rclcpp +
+  `robot_state_publisher` + `tf2_ros`. All primitive processes run in it via
+  `docker exec`. `--network host` + `--ipc host` so the zenoh ROS 2 graph is
+  shared with the host's atlas and the mapping/nav2/scene containers.
 - `orbbec_camera` ROS 2 driver for the Gemini 335 — **must be started before
-  `rbnx boot`** (e.g. systemd unit or external launch). The `lite3_camera`
-  primitive *bridges* that driver's topics; it does not spawn it.
-- CycloneDDS is the default RMW (`env: RMW_IMPLEMENTATION: rmw_cyclonedds_cpp`).
+  `rbnx boot`** (systemd unit or external launch, inside the same ROS 2 /
+  zenoh domain). The `lite3_camera` primitive *bridges* that driver's topics;
+  it does not spawn it.
+- RMW is `rmw_zenoh_cpp` with `ROS_DOMAIN_ID=0` (matches the working webots
+  example and the sibling containers).
 
 ## Coordinate frames
 
@@ -73,16 +80,37 @@ The chassis `move` capability is **velocity-only** with hard in-code limits
 
 ## Build & boot
 
+The host is bare L4T (no ROS 2). Primitives run inside the `robonix_lite3_ros`
+docker container; bring it up **before** `rbnx boot`. `robot_state_publisher`
+(the single TF publisher for the URDF's fixed chain) runs in that container
+from its entrypoint (ADR-0004).
+
 ```bash
+# 1. Build/package the robonix primitives (host-side codegen for proto/MCP stubs):
 rbnx validate ./primitives/lite3_chassis
 rbnx validate ./primitives/lite3_camera
 rbnx build -f robonix_manifest.yaml     # expect Failed:0 / Skipped:0
-# Start the Orbbec driver first, then:
+
+# 2. Bring up the ROS 2 container (builds the image, starts robot_state_publisher):
+bash container/start.sh
+#    (stop with: bash container/stop.sh)
+
+# 3. Start the Orbbec Gemini 335 vendor driver (out-of-band: systemd / launch),
+#    so /camera/color/... and /camera/depth/... exist before the camera primitive.
+
+# 4. Boot the robonix deployment — primitives docker-exec into the container:
 rbnx boot -f robonix_manifest.yaml
 rbnx caps -v                            # expect lite3_chassis / lite3_camera ACTIVE
 rbnx logs -t soma -l warn
-ros2 topic echo /odom                   # confirm protocol parsing
+
+# 5. Inside the container, confirm protocol parsing + TF:
+docker exec robonix_lite3_ros ros2 topic echo /odom --once
+docker exec robonix_lite3_ros ros2 run tf2_ros tf2_echo odom base_link
+docker exec robonix_lite3_ros ros2 topic echo /ultrasound/front --once
 ```
+
+If `/odom` is empty: check the Motion Host IP/subnet, and that UDP `:43897` on
+the perception host is free (the official `transfer` node must not be running).
 
 ## Package layout
 
@@ -91,8 +119,9 @@ robonix_manifest.yaml      deployment manifest (primitives, services, skills)
 soma.yaml                 robot model + components + capability exports
 urdf/Lite3.urdf           vendor body + appended sensor links
 config/                   rtabmap_params.yaml, nav2_params.yaml
-primitives/lite3_chassis/ Motion-Host UDP driver
-primitives/lite3_camera/  RGB-D topic bridge + snapshot
+container/                the robonix_lite3_ros container (compose/Dockerfile/start.sh)
+primitives/lite3_chassis/ Motion-Host UDP driver (docker-exec'd into the container)
+primitives/lite3_camera/  RGB-D topic bridge + snapshot (docker-exec'd into the container)
 docs/adr/                 architectural decisions
 CONTEXT.md                project glossary
 ```

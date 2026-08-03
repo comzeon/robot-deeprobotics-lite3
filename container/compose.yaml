@@ -1,0 +1,46 @@
+# robonix_lite3_ros container — the ROS 2 home for Lite3 primitives.
+#
+# Bring it up BEFORE `rbnx boot`:
+#   bash container/start.sh
+# Then:
+#   rbnx boot -f robonix_manifest.yaml
+#
+# robonix primitive drivers (lite3_chassis / lite3_camera) are NOT services in
+# this compose file — rbnx boot `docker exec`s them into THIS container once it
+# is running. robot_state_publisher (the single TF publisher, onboarding §3.1)
+# runs here from the entrypoint, publishing the Lite3 URDF's fixed joint chain.
+# See ADR-0004.
+name: ${COMPOSE_PROJECT_NAME:-robonix_lite3_ros}
+
+services:
+  ros:
+    container_name: ${ROBONIX_LITE3_CONTAINER:-robonix_lite3_ros}
+    build:
+      context: ./
+      dockerfile: Dockerfile
+      args:
+        ROS_BASE_IMAGE: "${ROBONIX_LITE3_ROS_BASE_IMAGE:-robonix-ros:humble-ros-base}"
+    # host network so the ROS 2 graph (zenoh) is shared with the host's atlas
+    # and the sibling mapping/nav2/scene containers (ADR-0004).
+    network_mode: host
+    # ipc=host is load-bearing for FastRTPS/SHM data transfer; matching
+    # scene/mapping's --ipc=host keeps /dev/shm namespaces aligned.
+    ipc: host
+    stdin_open: true
+    tty: true
+    environment:
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_zenoh_cpp}"
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-0}"
+      # Where the entrypoint finds the URDF (bind-mounted below).
+      LITE3_URDF_PATH: /robonix_pkgs/urdf/Lite3.urdf
+      NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-all}"
+      NVIDIA_DRIVER_CAPABILITIES: "${NVIDIA_DRIVER_CAPABILITIES:-graphics,utility,compute}"
+    volumes:
+      # Bind-mount the whole robot-deeprobotics-lite3 package so primitives + the
+      # URDF are reachable without rebuilding: `/robonix_pkgs/<primitives|urdf|...>`.
+      # Each primitive start.sh docker exec's python3 -m <driver> from the
+      # /robonix_pkgs/primitives/<name> working dir.
+      - ../:/robonix_pkgs:rw
+      # robonix-api (repo pylib) is bind-mounted by the host rbnx setup under
+      # /robonix_pkgs/... when primitives need it; the start.sh sets PYTHONPATH
+      # explicitly to point the container at it.

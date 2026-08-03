@@ -247,8 +247,8 @@ def depth_snapshot(msg: Empty) -> Image:
 # ── extrinsics: tf2 lookup once at startup, republish on a latched topic ────
 def publish_extrinsics_when_ready(base_frame: str, cam_frame: str, topic: str) -> None:
     """Resolve base_frame→cam_frame from tf2, publish on latched extrinsics
-    topic, exit. tf2 reads the URDF chain via primitive-robot-description-rbnx;
-    consumers never touch tf2 directly (ADR-0001)."""
+    topic, exit. tf2 reads the URDF chain via robot_state_publisher inside the
+    robonix_lite3_ros container (ADR-0004); consumers never touch tf2 directly."""
     from rclpy.duration import Duration  # type: ignore
     from rclpy.time import Time  # type: ignore
     from tf2_ros import Buffer, TransformListener  # type: ignore

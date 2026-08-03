@@ -58,9 +58,12 @@
 - [x] manifest 新增 `service.nav2`（`provider_ids: {map: mapping, odom: lite3_chassis}`）。
 - [x] 无 lidar 前提写进 soma `cannot_do` 与 README、nav2_params 注释。→ ADR-0002
 
-### 11. `robot_description` / TF 发布方 ✅
-- [x] manifest 新增 `primitive.robot_description`（`primitive-robot-description-rbnx`），由底盘 `/odom` 提供 odom→base_link。
-- [x] URDF 新增 `base_link`→`TORSO` 固定关节，补 `head_camera_*`/`ultrasonic_*` link，TF 树连通（已用 ElementTree 校验 23 link）。
+### 11. `robot_description` / TF 发布方 ✅ → 已改为容器化
+- [x] **不使用** 外部 `primitive-robot-description-rbnx`（裸 L4T 主机无 `/opt/ros/humble`，其 build.sh 必失败）。改为在 `robonix_lite3_ros` 容器内由 `robot_state_publisher` 发布 URDF 固定 TF 链（`base_link`→`TORSO`→`head_camera_*`/`ultrasonic_*`）。→ ADR-0004
+- [x] URDF 新增 `base_link`→`TORSO` 固定关节，TF 树连通（已用 ElementTree 校验 23 link）。
+- [x] 新增 `container/`（compose.yaml/Dockerfile/entrypoint.sh/start.sh/stop.sh）：`robonix-ros:humble-ros-base` + `apt ros-humble-rmw-zenoh-cpp`，`--network host`+`--ipc host`，entrypoint 启动 zenoh 路由器 + `robot_state_publisher` 后常驻供原语 `docker exec`。
+- [x] 两个原语 `scripts/start.sh` 改为 `docker exec` 进 `robonix_lite3_ros`（镜像 `tiago_chassis`/`tiago_camera` 的 `docker exec` 模板，含 advertise-host 解析、容器内 PYTHONPATH、日志 tail）。
+- [x] manifest `env.RMW_IMPLEMENTATION` 改为 `rmw_zenoh_cpp`（与 webots 及 mapping/nav2/scene 容器同域）。
 
 ### 12. 音频能力 ✅
 - [x] 从 soma / manifest 删除 `audio` 组件与 `lite3_audio` 导出；`cannot_do` 写明“未部署音频”。
@@ -100,14 +103,20 @@
 ## 待你在实机上验证（我无法非交互登录）
 
 ```bash
-# 在 100.72.167.58 (~/Desktop/robonix) 上：
+# 前提：host 100.72.167.58 是裸 L4T（无 ROS），原语与 robot_state_publisher 都在
+# robonix_lite3_ros 容器里跑（ADR-0004）。
 rbnx validate ./primitives/lite3_chassis
-rbnx build -f robonix_manifest.yaml   # 期望 Failed:0 / Skipped:0 / Built==Total
+rbnx build -f robonix_manifest.yaml          # 期望 Failed:0 / Skipped:0 / Built==Total
+bash container/start.sh                       # 先起容器（含 robot_state_publisher + zenohd）
+# 起奥比中光 Gemini 335 驱动（systemd/launch，在容器或同 ROS2/zenoh 域）：
+#   systemd start orbbec_camera  (或你定的方式)
 rbnx boot -f robonix_manifest.yaml
-rbnx caps -v                            # 期望 lite3_chassis/lite3_camera/robot_description 为 ACTIVE
-ros2 topic echo /odom --once            # 确认 RobotState 帧解析（协议层唯一真值验证）
-ros2 topic echo /ultrasound/front --once
-# 协议若不通：核对运动主机 IP/网段、确认感知主机 43897 未被官方 transfer 占用。
+rbnx caps -v                                   # 期望 lite3_chassis/lite3_camera 为 ACTIVE
+docker exec robonix_lite3_ros ros2 topic echo /odom --once          # 协议层唯一真值验证
+docker exec robonix_lite3_ros ros2 run tf2_ros tf2_echo odom base_link
+docker exec robonix_lite3_ros ros2 topic echo /ultrasound/front --once
+# 协议若不通：核对运动主机 IP/网段、确认感知主机 43897 未被官方 transfer 占用、
+#            确认 rbnx 启动了容器（`docker ps | grep robonix_lite3`）。
 ```
 
 ## 遗留未决（需你决定后我可继续）

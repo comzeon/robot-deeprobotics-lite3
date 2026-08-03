@@ -15,12 +15,19 @@ catalog:
     - name: syswonder
       email: dev@syswonder.org
 
-# ROS 2 RMW environment for the runtime.
+# ROS 2 RMW + domain. The host is bare L4T; every ROS 2 process runs inside the
+# robonix_lite3_ros container (bring it up with `bash container/start.sh` before
+# `rbnx boot`), which shares this zenoh RMW + domain with the mapping/nav2/scene
+# sibling containers (ADR-0004).
 env:
   ROS_DOMAIN_ID: "0"
-  RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+  RMW_IMPLEMENTATION: rmw_zenoh_cpp
 
 # ── primitives (booted after the system layer) ──────────────────────────────
+# All primitives docker-exec into the pre-running robonix_lite3_ros container;
+# rclpy / tf2_ros live there, not on the host. robot_state_publisher (the single
+# TF publisher for the URDF's fixed chain) runs in that container from its
+# entrypoint — it is NOT declared here as a primitive (ADR-0004).
 primitive:
   - name: lite3_chassis
     path: ./primitives/lite3_chassis
@@ -33,17 +40,6 @@ primitive:
       base_frame: base_link
       odom_topic: /odom
       cmd_vel_topic: /cmd_vel
-
-  # Single URDF + TF publisher (onboarding §3.1): odom→base_link→head_camera_*.
-  - name: robot_description
-    url: https://github.com/syswonder/primitive-robot-description-rbnx
-    branch: main
-    config:
-      urdf_path: urdf/Lite3.urdf
-      # TF chain the motion/nav/scene stack consumes.
-      odom_frame: odom
-      base_frame: base_link
-      publish_odom_to_base: true   # odom→base_link (leg odometry from chassis)
 
   - name: lite3_camera
     path: ./primitives/lite3_camera

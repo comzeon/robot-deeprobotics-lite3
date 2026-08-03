@@ -570,8 +570,10 @@ def init(cfg: dict):
     base_frame = str(cfg.get("base_frame", os.environ.get("LITE3_BASE_FRAME", "base_link")))
     os.environ["LITE3_BASE_FRAME"] = base_frame
 
-    # /odom (nav_msgs/Odometry) — onboarding §6.1 requires odom + TF; the
-    # odom→base_link TF is published by primitive-robot-description-rbnx (ADR-0001).
+    # /odom (nav_msgs/Odometry) — onboarding §6.1 requires odom. The odom→
+    # base_link STATIC transform is published by robot_state_publisher inside
+    # the robonix_lite3_ros container (from this package's URDF; ADR-0004); the
+    # leg odom drives the base pose via /odom.
     from nav_msgs.msg import Odometry  # type: ignore
     odom_pub = lite3.create_publisher(
         "robonix/primitive/chassis/odom",

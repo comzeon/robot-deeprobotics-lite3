@@ -12,8 +12,7 @@ package:
   license: MulanPSL-2.0
   tags: [camera, rgbd, orbbec, deeprobotics, lite3]
   maintainers:
-    - name: syswonder
-      email: dev@syswonder.org
+    - "syswonder <dev@syswonder.org>"
 
 build: bash scripts/build.sh
 start: bash scripts/start.sh
