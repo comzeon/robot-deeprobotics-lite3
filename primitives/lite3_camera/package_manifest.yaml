@@ -1,0 +1,14 @@
+manifestVersion: 1
+package:
+  name: com.robonix.deeprobotics.lite3_camera
+  version: 0.1.0
+  vendor: deeprobotics
+  description: Lite3 camera primitive — RTSP snapshot from onboard USB camera.
+  license: MulanPSL-2.0
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+stop: pkill -TERM -f "[l]ite3_camera" 2>/dev/null || true
+capabilities:
+  - name: robonix/primitive/camera/snapshot
+  - name: robonix/primitive/camera/driver
+  - name: robonix/primitive/camera/rgb

@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""Lite3 chassis primitive — UDP bridge + robonix capabilities."""
+import argparse
+import json
+import os
+import signal
+import socket
+import struct
+import sys
+import time
+
+# Protocol constants
+ETH_CMD_FMT = '<III'
+ETH_CMD_SIZE = 12
+CMD_ROBOT_DATA = 0x00000906
+JOINT_NAMES = ['FL_HipX','FL_HipY','FL_Knee',
+               'FR_HipX','FR_HipY','FR_Knee',
+               'HL_HipX','HL_HipY','HL_Knee',
+               'HR_HipX','HR_HipY','HR_Knee']
+
+def parse_robot_data(payload):
+    off = 0
+    tick = struct.unpack_from('<I', payload, off)[0]; off += 4
+    imu_raw = struct.unpack_from('<i9f', payload, off); off += 40
+    imu = {'roll': imu_raw[1], 'pitch': imu_raw[2], 'yaw': imu_raw[3],
+           'angvel_r': imu_raw[4], 'angvel_p': imu_raw[5], 'angvel_y': imu_raw[6],
+           'acc_x': imu_raw[7], 'acc_y': imu_raw[8], 'acc_z': imu_raw[9]}
+    joints = []
+    for i in range(12):
+        p, v, t, tmp = struct.unpack_from('<ffff', payload, off); off += 16
+        joints.append({'name': JOINT_NAMES[i], 'pos': p, 'vel': v, 'trq': t, 'temp': tmp})
+    contact = list(struct.unpack_from('<12d', payload, off)); off += 96
+    return {'tick': tick, 'imu': imu, 'joints': joints, 'contact': contact}
+
+def build_joint_cmd(pos=0.0, vel=0.0, trq=0.0, kp=30.0, kd=1.0):
+    return struct.pack('<fffff', pos, vel, trq, kp, kd)
+
+def build_robot_cmd(vx=0.0, vy=0.0, wz=0.0):
+    """Build a command packet."""
+    cmds = [build_joint_cmd() for _ in range(12)]
+    return b''.join(cmds)
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--robot-ip', default='192.168.2.1')
+    parser.add_argument('--cmd-port', type=int, default=43893)
+    parser.add_argument('--state-port', type=int, default=43897)
+    parser.add_argument('--atlas', default='127.0.0.1:50051')
+    parser.add_argument('--provider-id', default='lite3_chassis')
+    args = parser.parse_args()
+
+    # UDP sockets
+    state_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    state_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    state_sock.settimeout(0.1)
+    state_sock.bind(('0.0.0.0', args.state_port))
+
+    cmd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    running = True
+    def handler(*a):
+        nonlocal running; running = False
+    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.SIGTERM, handler)
+
+    print(f"[{args.provider_id}] Lite3 bridge started")
+    print(f"  Listening: UDP :{args.state_port} ← {args.robot_ip}")
+    print(f"  Sending:   UDP → {args.robot_ip}:{args.cmd_port}")
+    print(f"  Atlas:     {args.atlas}")
+
+    last_cmd = build_robot_cmd()
+    last_send = 0
+
+    while running:
+        try:
+            data, addr = state_sock.recvfrom(4096)
+        except socket.timeout:
+            continue
+        except OSError:
+            break
+
+        if len(data) < ETH_CMD_SIZE:
+            continue
+        code, value, tc = struct.unpack_from(ETH_CMD_FMT, data, 0)
+        if code != CMD_ROBOT_DATA:
+            continue
+
+        payload = data[ETH_CMD_SIZE:]
+        if len(payload) < 332:
+            continue
+
+        state = parse_robot_data(payload)
+        now = time.time()
+
+        # Print status periodically
+        if int(state['tick']) % 100 == 0:
+            imu = state['imu']
+            j = state['joints'][0]
+            print(f"  [{state['tick']}] r={imu['roll']:.1f} p={imu['pitch']:.1f} y={imu['yaw']:.1f} | "
+                  f"{j['name']}={j['pos']:.3f}")
+
+        # Send command periodically (keep control)
+        if now - last_send > 0.1:
+            cmd_sock.sendto(last_cmd, (args.robot_ip, args.cmd_port))
+            last_send = now
+
+    state_sock.close()
+    cmd_sock.close()
+    print(f"[{args.provider_id}] stopped")
+
+if __name__ == '__main__':
+    main()

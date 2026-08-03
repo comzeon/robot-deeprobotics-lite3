@@ -1,0 +1,87 @@
+urdf:
+  path: ./urdf/Lite3.urdf
+  root_link: TORSO
+  model_name: lite3
+
+robot:
+  id: lite3_01
+  display_name: "DeepRobotics Lite3 quadruped robot"
+  family: mobile_robot
+  root_part: base
+  dimensions: { length_m: 0.55, width_m: 0.27, height_m: 0.42 }
+  footprint:
+    base_frame: TORSO
+    points:
+      - [0.25, 0.12]
+      - [0.25, -0.12]
+      - [-0.25, -0.12]
+      - [-0.25, 0.12]
+  mass_kg: 12.0
+  passable_door_width_m: 0.60
+  exports:
+    - provider_id: lite3_nav2
+      capabilities:
+        - { path: robonix/service/navigation/navigate, description: "Navigate to a 2D goal in the mapped scene." }
+        - { path: robonix/service/navigation/navigate/status, description: "Report the current navigation goal status." }
+        - { path: robonix/service/navigation/navigate/cancel, description: "Cancel the active navigation goal." }
+    - provider_id: skill_explore
+      capabilities:
+        - { path: robonix/skill/explore/explore, description: "Run autonomous frontier exploration." }
+        - { path: robonix/skill/explore/explore/status, description: "Report current exploration status." }
+        - { path: robonix/skill/explore/explore/cancel, description: "Cancel active exploration task." }
+  components:
+    - id: base
+      type: legged_robot
+      urdf_link: TORSO
+      exports:
+        - provider_id: lite3_chassis
+          capabilities:
+            - { path: robonix/primitive/chassis/move, description: "Command leg motion through Lite3 UDP." }
+            - { path: robonix/primitive/chassis/odom, description: "Read odometry from leg odometry." }
+            - { path: robonix/primitive/chassis/twist_in, description: "Accept velocity commands on cmd_vel." }
+            - { path: robonix/primitive/chassis/driver, description: "Lifecycle driver." }
+      components:
+        - id: fl_leg
+          type: leg
+          urdf_joint: FL_HipX_joint
+          exports: []
+        - id: fr_leg
+          type: leg
+          urdf_joint: FR_HipX_joint
+          exports: []
+        - id: hl_leg
+          type: leg
+          urdf_joint: HL_HipX_joint
+          exports: []
+        - id: hr_leg
+          type: leg
+          urdf_joint: HR_HipX_joint
+          exports: []
+    - id: head_camera
+      type: rgb_camera
+      urdf_link: TORSO
+      exports:
+        - provider_id: lite3_camera
+          capabilities:
+            - { path: robonix/primitive/camera/snapshot, description: "Capture an RGB image from the Lite3 camera." }
+    - id: audio
+      type: audio_io
+      exports:
+        - provider_id: lite3_audio
+          capabilities:
+            - { path: robonix/primitive/audio/mic, description: "Stream mic from host." }
+            - { path: robonix/primitive/audio/speaker, description: "Play audio on host speaker." }
+            - { path: robonix/primitive/audio/list_devices, description: "List host audio devices." }
+
+description:
+  summary: "A DeepRobotics Lite3 quadruped robot deployment with UDP bridge, RGB camera, mapping, navigation, and exploration."
+  can_do:
+    - "Walk using velocity commands via the Lite3 UDP protocol."
+    - "Navigate to 2D goals using SLAM and Nav2."
+    - "Capture images from the onboard USB camera."
+  cannot_do:
+    - "Manipulate objects; no arm or gripper."
+    - "Use lidar; not yet deployed."
+  notes:
+    - "The Lite3 UDP bridge must be running for robot communication."
+    - "UDP ports 43893 and 43897 are used for robot control and state."

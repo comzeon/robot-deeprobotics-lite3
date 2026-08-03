@@ -1,0 +1,9 @@
+# RTAB-Map parameters for Lite3
+RTABMAP:
+  Mem/UseOdomInfo: "false"
+  RGBD/NeighborLinkRefining: "true"
+  RGBD/ProximityBySpace: "true"
+  RGBD/ProximityByTime: "false"
+  RGBD/AngularUpdate: "0.01"
+  RGBD/LinearUpdate: "0.01"
+  Grid/RangeMax: 8.0

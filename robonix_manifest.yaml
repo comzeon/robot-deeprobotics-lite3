@@ -1,0 +1,36 @@
+manifestVersion: 1
+name: robot-deeprobotics-lite3
+primitive:
+- config:
+    cmd_port: 43893
+    robot_ip: 192.168.2.1
+    state_port: 43897
+  name: lite3_chassis
+  path: ./primitives/lite3_chassis
+- config:
+    rtsp_url: rtsp://192.168.2.1:8554/test
+  name: lite3_camera
+  path: ./primitives/lite3_camera
+service:
+- config:
+    backend: sqlite
+  name: memory
+  path: ${ROBONIX_SOURCE_PATH}/services/memsearch
+system:
+  atlas:
+    listen: 0.0.0.0:50051
+    log: info
+  executor:
+    listen: 127.0.0.1:50061
+    log: info
+  liaison:
+    listen: 0.0.0.0:50081
+    log: info
+  pilot:
+    listen: 127.0.0.1:50071
+    log: debug
+    vlm:
+      api_format: openai
+      api_key: ${VLM_API_KEY}
+      model: ${VLM_MODEL}
+      upstream: ${VLM_BASE_URL}
