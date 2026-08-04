@@ -51,11 +51,15 @@ fi
 docker compose -f compose.yaml up -d --build
 
 # Wait for robot_state_publisher to be alive inside the container so TF is
-# publishing before `rbnx boot` execs the primitives in.
+# publishing before `rbnx boot` execs the primitives in. `pgrep -f` matches the
+# full command line (the process name is truncated to 15 chars, so `-x` fails).
 echo "[container/start] waiting for robot_state_publisher…"
 ok=0
 for _ in $(seq 1 30); do
-  if docker exec "$ROBONIX_LITE3_CONTAINER" pgrep -x robot_state_publ >/dev/null 2>&1; then
+  if docker exec "$ROBONIX_LITE3_CONTAINER" pgrep -f robot_state_publisher >/dev/null 2>&1 \
+     || docker exec "$ROBONIX_LITE3_CONTAINER" bash -lc \
+          "source /opt/ros/humble/setup.bash 2>/dev/null; export RMW_IMPLEMENTATION=rmw_zenoh_cpp; ros2 topic list 2>/dev/null | grep -q '^/tf$'" \
+        >/dev/null 2>&1; then
     ok=1
     break
   fi
