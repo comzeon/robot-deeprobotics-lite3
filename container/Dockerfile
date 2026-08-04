@@ -28,11 +28,22 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         libpcl-dev \
         python3-yaml \
         python3-numpy \
+        python3-pip \
         git \
         cmake \
         build-essential \
         python3-colcon-common-extensions \
     && rm -rf /var/lib/apt/lists/*
+
+# robonix-api Python dependencies (FastMCP / grpc / protobuf / numpy / uvicorn).
+# The drivers do `from robonix_api import ...` and the codegen proto stubs need
+# protobuf; the @mcp decorator needs FastMCP. Versions mirror the verified webots
+# sim Dockerfile. Tsinghua PyPI index for CN networks; PIP_BREAK_SYSTEM_PACKAGES
+# lets pip overwrite the distro's python packages.
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+    PIP_BREAK_SYSTEM_PACKAGES=1
+RUN python3 -m pip install --no-cache-dir \
+        "grpcio>=1.78.0" "protobuf>=6.30,<7" mcp "fastmcp>=3" numpy Pillow uvicorn httpx
 
 # ── Livox SDK2 + livox_ros_driver2 (MID-360S lidar) ─────────────────────────
 # Not an apt package — built from source (colcon). livox_ros_driver2 v1.2.6+
