@@ -71,6 +71,12 @@ RUN bash -lc 'source /opt/ros/humble/setup.bash \
 COPY entrypoint.sh /lite3_entrypoint.sh
 RUN chmod +x /lite3_entrypoint.sh
 
+# Livox-SDK2's `make install` puts liblivox_lidar_sdk_shared.so in /usr/local/lib.
+# Without it on LD_LIBRARY_PATH, livox_ros_driver2_node dies at dlopen with
+# "cannot open shared object file". Bake it in so every process (including
+# `docker exec` shells) inherits it. Also include the livox colcon install lib.
+ENV LD_LIBRARY_PATH="/usr/local/lib:/livox_ws/install/lib:${LD_LIBRARY_PATH:-}"
+
 # The URDF + this package are bind-mounted from the host (compose volumes), so
 # the image carries no robot model — a URDF edit on the host takes effect on the
 # next container start without rebuild.
