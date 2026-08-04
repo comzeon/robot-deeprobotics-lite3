@@ -23,6 +23,9 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         ros-humble-rmw-zenoh-cpp \
         ros-humble-orbbec-camera \
         ros-humble-orbbec-description \
+        ros-humble-pcl-ros \
+        ros-humble-pcl-conversions \
+        libpcl-dev \
         python3-yaml \
         python3-numpy \
         git \
@@ -53,6 +56,10 @@ RUN mkdir -p /livox_ws/src
 COPY vendor/livox_ros_driver2 /livox_ws/src/livox_ros_driver2
 RUN cd /livox_ws/src/livox_ros_driver2 \
     && bash build.sh humble \
+    # livox_ros_driver2's build.sh swaps in package_ROS2.xml then removes
+    # package.xml after colcon runs, so the install tree ends up WITHOUT the
+    # package.xml that `ros2 pkg` needs to discover the package. Restore it.
+    && cp -f package_ROS2.xml /livox_ws/install/livox_ros_driver2/share/livox_ros_driver2/package.xml \
     && rm -rf /livox_ws/build /livox_ws/log
 
 # Entrypoint: source ROS, bring up the zenoh router, start robot_state_publisher
