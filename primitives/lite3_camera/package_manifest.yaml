@@ -34,8 +34,8 @@ config.spec:
     description: "Orbbec color image topic (sensor_msgs/Image)."
   depth_topic:
     type: string
-    default: /camera/depth/image_rect_raw
-    description: "Orbbec depth image topic (sensor_msgs/Image)."
+    default: /camera/depth/image_raw
+    description: "Orbbec depth image topic (sensor_msgs/Image). Requires depth_registration:=true."
   camera_info_topic:
     type: string
     default: /camera/color/camera_info

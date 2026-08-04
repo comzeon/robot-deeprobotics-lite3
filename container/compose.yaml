@@ -28,6 +28,13 @@ services:
     ipc: host
     stdin_open: true
     tty: true
+    # USB passthrough for the Orbbec Gemini 335 depth camera (eth1 USB3). The
+    # orbbec_camera driver opens the device node inside this container, so the
+    # host's /dev/bus/usb tree must be visible here. udev rules
+    # (99-obsensor-libusb.rules) are installed on the HOST so the node is
+    # openable by the container's non-root user.
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
     environment:
       RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_zenoh_cpp}"
       ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-0}"

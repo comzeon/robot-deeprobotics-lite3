@@ -48,7 +48,10 @@ primitive:
       # MUST be started before `rbnx boot` (ADR-0002). Defaults follow the
       # orbbec_camera launch topics.
       rgb_topic: /camera/color/image_raw
-      depth_topic: /camera/depth/image_rect_raw
+      # Orbbec depth topic is /camera/depth/image_raw (no `rect` — that's the
+      # RealSense naming). Launch orbbec_camera's gemini_330_series.launch.py
+      # with depth_registration:=true so depth is aligned to color for RGBD SLAM.
+      depth_topic: /camera/depth/image_raw
       camera_info_topic: /camera/color/camera_info
       # Deployment-provided intrinsics fallback (used only until live CameraInfo
       # arrives). Fill with the calibrated Gemini 335 K for the deployment unit.

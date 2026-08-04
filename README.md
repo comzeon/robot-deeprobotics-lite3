@@ -95,8 +95,22 @@ rbnx build -f robonix_manifest.yaml     # expect Failed:0 / Skipped:0
 bash container/start.sh
 #    (stop with: bash container/stop.sh)
 
-# 3. Start the Orbbec Gemini 335 vendor driver (out-of-band: systemd / launch),
+# 3. Start the Orbbec Gemini 335 vendor driver (out-of-band: systemd / launch)
+#    INSIDE the same robonix_lite3_ros container (or same ROS_DOMAIN_ID + RMW),
 #    so /camera/color/... and /camera/depth/... exist before the camera primitive.
+#    The SDK is already baked into the container image; the container passes
+#    through /dev/bus/usb (compose `devices:`). Host-side udev rules needed once:
+sudo cp /opt/ros/humble/share/orbbec_camera/udev/99-obsensor-libusb.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+#    Launch with depth_registration (RGBD SLAM needs depth aligned to color) and
+#    point cloud off:
+docker exec robonix_lite3_ros bash -lc '
+  source /opt/ros/humble/setup.bash
+  ros2 launch orbbec_camera gemini_330_series.launch.py \
+    depth_registration:=true enable_point_cloud:=false \
+    color_width:=640 color_height:=480 color_fps:=30 \
+    depth_width:=640 depth_height:=480 depth_fps:=30
+'
 
 # 4. Boot the robonix deployment — primitives docker-exec into the container:
 rbnx boot -f robonix_manifest.yaml

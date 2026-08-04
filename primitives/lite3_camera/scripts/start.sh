@@ -39,7 +39,7 @@ exec docker exec \
   -e RBNX_INSTANCE_NAME="${RBNX_INSTANCE_NAME:-lite3_camera}" \
   -e RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_zenoh_cpp}" \
   -e LITE3_RGB_TOPIC="${LITE3_RGB_TOPIC:-/camera/color/image_raw}" \
-  -e LITE3_DEPTH_TOPIC="${LITE3_DEPTH_TOPIC:-/camera/depth/image_rect_raw}" \
+  -e LITE3_DEPTH_TOPIC="${LITE3_DEPTH_TOPIC:-/camera/depth/image_raw}" \
   -e LITE3_CAMERA_INFO_TOPIC="${LITE3_CAMERA_INFO_TOPIC:-/camera/color/camera_info}" \
   -e LITE3_RGB_FRAME_ID="${LITE3_RGB_FRAME_ID:-head_camera_rgb_optical_frame}" \
   -e LITE3_DEPTH_FRAME_ID="${LITE3_DEPTH_FRAME_ID:-head_camera_depth_optical_frame}" \

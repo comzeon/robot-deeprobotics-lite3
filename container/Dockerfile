@@ -12,10 +12,16 @@ ARG ROS_BASE_IMAGE=robonix-ros:humble-ros-base
 FROM ${ROS_BASE_IMAGE}
 
 # The base image carries rclpy / tf2_ros / robot_state_publisher / sensor_msgs
-# / nav_msgs / urdf. The only missing piece for the shared zenoh RMW domain is
-# rmw_zenoh_cpp (verified apt-installable as ros-humble-rmw-zenoh-cpp 0.1.8).
+# / nav_msgs / urdf. Missing pieces for this deploy:
+#   - rmw_zenoh_cpp (verified apt-installable as ros-humble-rmw-zenoh-cpp 0.1.8)
+#   - the Orbbec SDK ROS 2 wrapper (orbbec_camera) for the Gemini 335
+# Both are baked into the IMAGE so they survive container recreation — installing
+# them via `docker exec` at runtime would only touch the container's writable
+# layer and be lost on `compose down`/recreate.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ros-humble-rmw-zenoh-cpp \
+        ros-humble-orbbec-camera \
+        ros-humble-orbbec-description \
         python3-yaml \
     && rm -rf /var/lib/apt/lists/*
 
