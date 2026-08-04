@@ -48,6 +48,11 @@ services:
       # Each primitive start.sh docker exec's python3 -m <driver> from the
       # /robonix_pkgs/primitives/<name> working dir.
       - ../:/robonix_pkgs:rw
-      # robonix-api (repo pylib) is bind-mounted by the host rbnx setup under
-      # /robonix_pkgs/... when primitives need it; the start.sh sets PYTHONPATH
-      # explicitly to point the container at it.
+      # robonix-api (the robonix repo's pylib) must be inside the container because
+      # every driver does `from robonix_api import ...`. Resolve it through
+      # ROBONIX_SOURCE_PATH (already required by the manifest's memory service) so
+      # the repos can live anywhere — sibling on Desktop, nested inside the robonix
+      # repo, or a shared CI path. Fall back to the sibling layout used here.
+      # NOTE: ROBONIX_SOURCE_PATH must be an ABSOLUTE path (no `~`), since Docker
+      # compose does not expand the tilde.
+      - ${ROBONIX_SOURCE_PATH:-../../robonix}/pylib:/robonix_pkgs/pylib:ro
