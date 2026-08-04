@@ -54,12 +54,16 @@ RUN cd /tmp/Livox-SDK2 \
 
 RUN mkdir -p /livox_ws/src
 COPY vendor/livox_ros_driver2 /livox_ws/src/livox_ros_driver2
-RUN cd /livox_ws/src/livox_ros_driver2 \
+# livox_ros_driver2's build.sh does NOT source ROS itself; it expects the
+# caller to. Without `source /opt/ros/humble/setup.bash` here, colcon/CMake
+# cannot find PCL (its CMake config lives in the ROS CMAKE_PREFIX_PATH), so the
+# build "fails" silently (build.sh has no `set -e` → returns 0 anyway). The
+# `cp` after build.sh restores the package.xml that build.sh removed, so
+# `ros2 pkg` can discover livox_ros_driver2 in the install tree.
+RUN bash -lc 'source /opt/ros/humble/setup.bash \
+    && cd /livox_ws/src/livox_ros_driver2 \
     && bash build.sh humble \
-    # livox_ros_driver2's build.sh swaps in package_ROS2.xml then removes
-    # package.xml after colcon runs, so the install tree ends up WITHOUT the
-    # package.xml that `ros2 pkg` needs to discover the package. Restore it.
-    && cp -f package_ROS2.xml /livox_ws/install/livox_ros_driver2/share/livox_ros_driver2/package.xml \
+    && cp -f package_ROS2.xml /livox_ws/install/livox_ros_driver2/share/livox_ros_driver2/package.xml' \
     && rm -rf /livox_ws/build /livox_ws/log
 
 # Entrypoint: source ROS, bring up the zenoh router, start robot_state_publisher
