@@ -156,11 +156,21 @@ start_livox() {
     echo "[lite3_ros] livox_ros_driver2 not installed — skipping lidar (set LITE3_ENABLE_LIVOX=0 to silence)" >&2
     return 0
   fi
+  # Point the driver at the HOST-editable config (bind-mounted at /robonix_pkgs).
+  # The in-image default under /livox_ws/install is baked in and would be lost
+  # on container recreation; this path survives `compose down/up`. Edit
+  # container/vendor/livox_ros_driver2/config/MID360s_config.json on the host.
+  local user_config="${LITE3_LIVOX_CONFIG:-/robonix_pkgs/container/vendor/livox_ros_driver2/config/MID360s_config.json}"
+  if [ ! -f "$user_config" ]; then
+    echo "[lite3_ros] WARN: livox config not found at $user_config — using in-image default" >&2
+    user_config=""
+  fi
   ros2 launch livox_ros_driver2 msg_MID360s_launch.py \
+    ${user_config:+user_config_path:="$user_config"} \
     >"$log" 2>&1 &
   LIVOX_PID=$!
   _children+=("$LIVOX_PID")
-  echo "[lite3_ros] livox_ros_driver2 pid=${LIVOX_PID} (log=$log)"
+  echo "[lite3_ros] livox_ros_driver2 pid=${LIVOX_PID} (config=$user_config, log=$log)"
 }
 
 if [ "${LITE3_ENABLE_ORBBEC:-1}" = "1" ]; then start_orbbec; else
