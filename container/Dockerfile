@@ -37,13 +37,14 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 
 # robonix-api Python dependencies (FastMCP / grpc / protobuf / numpy / uvicorn).
 # The drivers do `from robonix_api import ...` and the codegen proto stubs need
-# protobuf; the @mcp decorator needs FastMCP. Versions mirror the verified webots
-# sim Dockerfile. Tsinghua PyPI index for CN networks; PIP_BREAK_SYSTEM_PACKAGES
-# lets pip overwrite the distro's python packages.
+# protobuf; the @mcp decorator needs FastMCP. VERSIONS: this L4T robonix (0.1.0)
+# codegen emits OLD-format _pb2.py (protobuf 3.x API — `_descriptor.FieldDescriptor`),
+# which protobuf>=4 refuses to execute ("Descriptors cannot be created directly").
+# Pin protobuf==3.20.3 to match the generated stubs. Tsinghua PyPI for CN networks.
 ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
     PIP_BREAK_SYSTEM_PACKAGES=1
 RUN python3 -m pip install --no-cache-dir \
-        "grpcio>=1.78.0" "protobuf>=6.30,<7" mcp "fastmcp>=3" numpy Pillow uvicorn httpx
+        "grpcio>=1.78.0" "protobuf==3.20.3" mcp "fastmcp>=3" numpy Pillow uvicorn httpx
 
 # ── Livox SDK2 + livox_ros_driver2 (MID-360S lidar) ─────────────────────────
 # Not an apt package — built from source (colcon). livox_ros_driver2 v1.2.6+
@@ -65,6 +66,14 @@ RUN cd /tmp/Livox-SDK2 \
 
 RUN mkdir -p /livox_ws/src
 COPY vendor/livox_ros_driver2 /livox_ws/src/livox_ros_driver2
+# Force the msg_MID360s launch to emit STANDARD PointCloud2 (xfer_format=0)
+# instead of livox's CustomMsg (xfer_format=1). The lite3_lidar primitive
+# subscribes sensor_msgs/PointCloud2; type mismatch makes RMW refuse to match
+# ("no publisher discovered"), which is what blocked the lidar primitive at
+# CMD_INIT. Baking the sed here keeps the fix on every rebuild.
+RUN sed -i 's/^xfer_format   = 1/xfer_format   = 0/' \
+      /livox_ws/src/livox_ros_driver2/launch_ROS2/msg_MID360s_launch.py \
+    && grep -n "xfer_format" /livox_ws/src/livox_ros_driver2/launch_ROS2/msg_MID360s_launch.py | head -2
 # livox_ros_driver2's build.sh does NOT source ROS itself; it expects the
 # caller to. Without `source /opt/ros/humble/setup.bash` here, colcon/CMake
 # cannot find PCL (its CMake config lives in the ROS CMAKE_PREFIX_PATH), so the
