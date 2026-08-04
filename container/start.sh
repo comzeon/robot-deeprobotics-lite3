@@ -34,6 +34,19 @@ if ! docker image inspect "$ROBONIX_LITE3_ROS_BASE_IMAGE" >/dev/null 2>&1; then
   exit 1
 fi
 
+# Pre-flight: the Livox sources must be downloaded into vendor/ — the Docker
+# build VM cannot reach github.com (COPY has no network). See vendor/README.md.
+if [ ! -d "$SCRIPT_DIR/vendor/Livox-SDK2" ] || [ ! -d "$SCRIPT_DIR/vendor/livox_ros_driver2" ]; then
+  echo "[container/start] ERROR: Livox sources missing under container/vendor/." >&2
+  echo "[container/start]   The Docker build has no GitHub access; download them first:" >&2
+  echo "[container/start]     git clone --depth 1 --branch v1.3.1 \\" >&2
+  echo "[container/start]       https://github.com/Livox-SDK/Livox-SDK2.git container/vendor/Livox-SDK2" >&2
+  echo "[container/start]     git clone --depth 1 --branch 1.2.6 \\" >&2
+  echo "[container/start]       https://github.com/Livox-SDK/livox_ros_driver2.git container/vendor/livox_ros_driver2" >&2
+  echo "[container/start]   (see container/vendor/README.md)" >&2
+  exit 1
+fi
+
 # Build (first run installs rmw_zenoh_cpp; subsequent runs are cached) and start.
 docker compose -f compose.yaml up -d --build
 

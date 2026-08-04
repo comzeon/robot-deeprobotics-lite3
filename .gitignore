@@ -8,3 +8,8 @@ logs/
 *.log
 *.bak
 *.swp
+
+# Vendored Livox sources (build input for the container image) — downloaded
+# locally, never committed. Keep only the vendor/README.md.
+container/vendor/*
+!container/vendor/README.md
