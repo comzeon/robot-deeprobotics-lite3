@@ -37,14 +37,24 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # image so the lidar stack survives container recreation. The ROS2 driver build
 # (./build.sh humble) cd's up two levels, so the clone MUST live at
 # /livox_ws/src/livox_ros_driver2 (colcon workspace root = /livox_ws).
-RUN git clone --depth 1 --branch v1.3.1 https://github.com/Livox-SDK/Livox-SDK2.git /tmp/Livox-SDK2 \
+#
+# The git clone over HTTPS can hit "curl 16 Error in the HTTP2 framing layer" on
+# flaky GitHub connectivity (common from CN networks). Force HTTP/1.1 + a larger
+# postBuffer for stability. Point LIVOX_SDK2_URL / LIVOX_ROS2_DRIVER_URL at a
+# mirror (e.g. a Gitee fork) if GitHub stays unreachable from the build host.
+ARG LIVOX_SDK2_URL=https://github.com/Livox-SDK/Livox-SDK2.git
+ARG LIVOX_ROS2_DRIVER_URL=https://github.com/Livox-SDK/livox_ros_driver2.git
+RUN git config --global http.version HTTP/1.1 \
+    && git config --global http.postBuffer 524288000
+
+RUN git clone --depth 1 --branch v1.3.1 "${LIVOX_SDK2_URL}" /tmp/Livox-SDK2 \
     && cd /tmp/Livox-SDK2 \
     && mkdir -p build && cd build \
     && cmake .. && make -j"$(nproc)" && make install \
     && rm -rf /tmp/Livox-SDK2
 
 RUN mkdir -p /livox_ws/src \
-    && git clone --depth 1 https://github.com/Livox-SDK/livox_ros_driver2.git /livox_ws/src/livox_ros_driver2 \
+    && git clone --depth 1 "${LIVOX_ROS2_DRIVER_URL}" /livox_ws/src/livox_ros_driver2 \
     && cd /livox_ws/src/livox_ros_driver2 \
     && bash build.sh humble \
     && rm -rf /livox_ws/build /livox_ws/log

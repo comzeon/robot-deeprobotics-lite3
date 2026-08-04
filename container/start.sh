@@ -54,4 +54,33 @@ if [ "$ok" -ne 1 ]; then
   exit 0
 fi
 echo "[container/start] $ROBONIX_LITE3_CONTAINER up; robot_state_publisher running."
+
+# Vendor drivers are launched by the container entrypoint. Confirm their topics
+# are up so `rbnx boot`'s primitives (camera/lidar sentinels) don't stall — but
+# only WARN if absent: the operator may have disabled them (LITE3_ENABLE_*=0)
+# or the hardware may be off, and the primitives themselves gate on first frame.
+wait_topic() {
+  local topic="$1" what="$2"
+  local found=0
+  for _ in $(seq 1 20); do
+    if docker exec "$ROBONIX_LITE3_CONTAINER" \
+         bash -lc "source /opt/ros/humble/setup.bash; timeout 1 ros2 topic info '$topic' >/dev/null 2>&1" \
+         >/dev/null 2>&1; then
+      found=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$found" -eq 1 ]; then
+    echo "[container/start] $what topic $topic up."
+  else
+    echo "[container/start] WARN: $what topic $topic not seen after 20s." >&2
+    echo "[container/start]   check: docker exec $ROBONIX_LITE3_CONTAINER tail -80 /tmp/orbbec_camera.log" >&2
+    echo "[container/start]   check: docker exec $ROBONIX_LITE3_CONTAINER tail -80 /tmp/livox_ros_driver2.log" >&2
+    echo "[container/start]   (disable: LITE3_ENABLE_ORBBEC=0 / LITE3_ENABLE_LIVOX=0 before start)" >&2
+  fi
+}
+wait_topic /camera/color/image_raw "Orbbec RGB"
+wait_topic /livox/lidar "Livox MID-360S"
+
 echo "[container/start] now run:  rbnx boot -f robonix_manifest.yaml"

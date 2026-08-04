@@ -100,42 +100,26 @@ rbnx validate ./primitives/lite3_camera
 rbnx validate ./primitives/lite3_lidar
 rbnx build -f robonix_manifest.yaml     # expect Failed:0 / Skipped:0
 
-# 2. Bring up the ROS 2 container (builds the image, starts robot_state_publisher):
-bash container/start.sh
-#    (stop with: bash container/stop.sh)
-
-# 3. Start the Orbbec Gemini 335 vendor driver (out-of-band: systemd / launch)
-#    INSIDE the same robonix_lite3_ros container (or same ROS_DOMAIN_ID + RMW),
-#    so /camera/color/... and /camera/depth/... exist before the camera primitive.
-#    The SDK is already baked into the container image; the container passes
-#    through /dev/bus/usb (compose `devices:`). Host-side udev rules needed once:
+# 2. Host-side udev rules for the Orbbec Gemini 335 (needed once; the container
+#    passes through /dev/bus/usb via compose `devices:`):
 sudo cp /opt/ros/humble/share/orbbec_camera/udev/99-obsensor-libusb.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
-#    Launch with depth_registration (RGBD SLAM needs depth aligned to color) and
-#    point cloud off:
-docker exec robonix_lite3_ros bash -lc '
-  source /opt/ros/humble/setup.bash
-  ros2 launch orbbec_camera gemini_330_series.launch.py \
-    depth_registration:=true enable_point_cloud:=false \
-    color_width:=640 color_height:=480 color_fps:=30 \
-    depth_width:=640 depth_height:=480 depth_fps:=30
-'
 
-# 4. Start the Livox MID-360S vendor driver (out-of-band, same container/domain).
-#    livox_ros_driver2 is baked into the image. Edit MID360s_config.json for your
-#    lidar IP (default 192.168.1.100) + host, then launch (PointCloud2 mode):
-docker exec robonix_lite3_ros bash -lc '
-  source /opt/ros/humble/setup.bash
-  source /livox_ws/install/setup.bash
-  ros2 launch livox_ros_driver2 msg_MID360s_launch.py
-'
+# 3. Bring up the ROS 2 container. The entrypoint starts the WHOLE environment:
+#    zenoh router + robot_state_publisher + orbbec_camera + livox_ros_driver2.
+#    Hardware absent / bring-up? Disable a vendor driver with
+#    LITE3_ENABLE_ORBBEC=0 / LITE3_ENABLE_LIVOX=0 (start.sh passes them through).
+bash container/start.sh
+#    (stop with: bash container/stop.sh)
+#    start.sh waits for robot_state_publisher + the two vendor topics, WARNs
+#    (does not fail) if a sensor is missing — the primitives gate on first frame.
 
-# 5. Boot the robonix deployment — primitives docker-exec into the container:
+# 4. Boot the robonix deployment — primitives docker-exec into the container:
 rbnx boot -f robonix_manifest.yaml
 rbnx caps -v                            # expect lite3_chassis/camera/lidar ACTIVE
 rbnx logs -t soma -l warn
 
-# 6. Inside the container, confirm protocol parsing + TF + scans:
+# 5. Inside the container, confirm protocol parsing + TF + scans:
 docker exec robonix_lite3_ros ros2 topic echo /odom --once
 docker exec robonix_lite3_ros ros2 run tf2_ros tf2_echo odom base_link
 docker exec robonix_lite3_ros ros2 topic echo /ultrasound/front --once
@@ -145,7 +129,9 @@ docker exec robonix_lite3_ros ros2 topic echo /scan --once
 If `/odom` is empty: check the Motion Host IP/subnet, and that UDP `:43897` on
 the perception host is free (the official `transfer` node must not be running).
 If `/scan` is empty: check the MID-360S IP in `MID360s_config.json` and that the
-lidar is reachable from the host network.
+lidar is reachable from the host network; the vendor driver log is
+`docker exec robonix_lite3_ros tail -80 /tmp/livox_ros_driver2.log` (orbbec:
+`/tmp/orbbec_camera.log`).
 
 ## Package layout
 

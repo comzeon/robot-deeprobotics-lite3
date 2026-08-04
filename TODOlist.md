@@ -78,7 +78,7 @@
 - [x] 新增 `head_camera_link`/`head_camera_rgb_optical_frame`/`head_camera_depth_optical_frame`、`ultrasonic_front_link`/`ultrasonic_rear_link`（均固定到 `TORSO`，含 6DOF 安装位姿估计；README 提示实机核对）。
 
 ### 14. soma 部件树 / `cannot_do` ✅
-- [x] `head_camera`(type `rgbd_camera`) + 前后 `range_sensor` 部件；`cannot_do` 增列无 lidar、无深度(已加)、单目(已被 RGB-D 取代)、速度-only、音频未部署、leg-odom 漂移。
+- [x] `head_camera`(type `rgbd_camera`) + 前后 `range_sensor` + `lidar_2d`(MID-360S) 部件；`cannot_do` 列速度-only、音频未部署、leg-odom 漂移（已**无**"无 lidar/无深度"残留——两者均已部署）。
 
 ---
 
@@ -105,6 +105,16 @@
 - [x] 新增 `primitives/lite3_lidar`（PointCloud2→LaserScan 切片原语，含 config.spec/start.sh docker exec/CAPABILITY.md）。
 - [x] manifest 接线 `lite3_lidar`（mapping `lidar2d` + nav2 `scan`）；soma `lidar_2d` 组件；URDF `lidar_link`（固定 TORSO，估计安装位姿）；README 接入步骤。
 
+### 21. GitHub clone 网络容错（容器构建）✅
+- [x] `container/Dockerfile` 的 Livox clone 加 `git config http.version HTTP/1.1` + `http.postBuffer 524288000`，缓解 `curl 16 HTTP2 framing layer`（国内直连 GitHub 典型失败）。
+- [x] clone URL 参数化为 `ARG LIVOX_SDK2_URL` / `ARG LIVOX_ROS2_DRIVER_URL`，可指向 Gitee 镜像/fork 绕过 GitHub。
+- [ ] 若 HTTP/1.1 仍不稳定：`container/start.sh` 可前置 `git clone` 到本地缓存目录再 `--build` 复用（构建期多阶段缓存）。
+
+### 22. vendor 驱动收进容器 entrypoint ✅
+- [x] `container/entrypoint.sh` 在 zenohd + robot_state_publisher 之后启动 `orbbec_camera`（`gemini_330_series.launch.py`，`depth_registration:=true`）与 `livox_ros_driver2`（`msg_MID360s_launch.py`），`container/start.sh` 一键起全套；两驱动可用 `LITE3_ENABLE_ORBBEC=0`/`LITE3_ENABLE_LIVOX=0` 禁用（调试期/无硬件）。
+- [x] `container/start.sh` 起容器后确认 `/camera/color/image_raw` 与 `/livox/lidar` 两个 vendor topic 就绪（缺席只 WARN 不失败，原语有 sentinel）。
+- [x] README 构建步骤改为"udev 一次性 + container/start.sh 一键起 → rbnx boot"；ADR-0004 补充 vendor 驱动归属。
+
 ---
 
 ## 待你在实机上验证（我无法非交互登录）
@@ -116,11 +126,9 @@ rbnx validate ./primitives/lite3_chassis
 rbnx validate ./primitives/lite3_camera
 rbnx validate ./primitives/lite3_lidar
 rbnx build -f robonix_manifest.yaml          # 期望 Failed:0 / Skipped:0 / Built==Total
-bash container/start.sh                       # 先起容器（含 robot_state_publisher + zenohd + livox SDK）
-# 起奥比中光 Gemini 335 驱动（systemd/launch，在容器或同 ROS2/zenoh 域）：
-#   systemd start orbbec_camera  (或你定的方式)
-# 起 Livox MID-360S 驱动（同域）：
-docker exec robonix_lite3_ros bash -lc 'source /opt/ros/humble/setup.bash; source /livox_ws/install/setup.bash; ros2 launch livox_ros_driver2 msg_MID360s_launch.py'
+sudo cp /opt/ros/humble/share/orbbec_camera/udev/99-obsensor-libusb.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger   # 一次性
+bash container/start.sh                       # 一键起全套：zenohd + rsp + orbbec + livox
 rbnx boot -f robonix_manifest.yaml
 rbnx caps -v                                   # 期望 lite3_chassis/lite3_camera/lite3_lidar 为 ACTIVE
 docker exec robonix_lite3_ros ros2 topic echo /odom --once          # 协议层唯一真值验证
@@ -129,11 +137,12 @@ docker exec robonix_lite3_ros ros2 topic echo /ultrasound/front --once
 docker exec robonix_lite3_ros ros2 topic echo /scan --once          # 验证 MID-360S 切片
 # 协议若不通：核对运动主机 IP/网段、确认感知主机 43897 未被官方 transfer 占用、
 #            确认 rbnx 启动了容器（`docker ps | grep robonix_lite3`）。
-# /scan 为空：核对 MID360s_config.json 的 lidar IP（默认 192.168.1.100）+ host。
+# /scan 为空：核对 MID360s_config.json 的 lidar IP（默认 192.168.1.100）+ host；
+#             vendor 日志：`docker exec robonix_lite3_ros tail -80 /tmp/livox_ros_driver2.log`。
 ```
 
 ## 遗留未决（需你决定后我可继续）
 
-- URDF 传感器安装位姿为**估计值**（camera +x0.18/+z0.18，超声波 ±0.25）；实机量测后回填。
-- 奥比中光 Gemini 335 的 `orbbec_camera` 启动方式（systemd / launch）需你定；README 已要求 boot 前先起。
-- `rtabmap_params.yaml` 暂未针对单目深度+无激光做完整 RTAB-Map 调参，建议实机建图后迭代。
+- URDF 传感器安装位姿为**估计值**（camera +x0.18/+z0.18，超声波 ±0.25，lidar z=0.30）；实机量测后回填。
+- `rtabmap_params.yaml` 暂未针对 lidar+depth 融合做完整调参，建议实机建图后迭代。
+- 若 Git clone 仍不稳定：`container/start.sh` 可改为先在宿主预 clone 到本地缓存再 `--build`（多阶段复用），或 `docker build --build-arg LIVOX_SDK2_URL=<gitee镜像>`。
