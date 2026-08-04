@@ -93,19 +93,31 @@ robot:
           capabilities:
             - { path: robonix/primitive/chassis/ultrasound_rear, description: "Rear ultrasonic distance (sensor_msgs/Range)." }
 
+    # Livox MID-360S 3D lidar — sliced to a planar 2D scan by the lite3_lidar
+    # primitive; the primary occupancy source for Nav2.
+    - id: lidar
+      type: lidar_2d
+      urdf_link: lidar_link
+      exports:
+        - provider_id: lite3_lidar
+          capabilities:
+            - { path: robonix/primitive/lidar/lidar, description: "2D laser scan stream (/scan) sliced from the MID-360S point cloud." }
+            - { path: robonix/primitive/lidar/snapshot, description: "Capture one 2D laser scan on demand." }
+            - { path: robonix/primitive/lidar/driver, description: "Lifecycle driver." }
+
 description:
-  summary: "A DeepRobotics Lite3 (Explorer) deployment: direct Motion-Host UDP bridge, RGB-D perception (Orbbec Gemini 335), RTAB-Map mapping, Nav2, and frontier exploration."
+  summary: "A DeepRobotics Lite3 (Explorer) deployment: direct Motion-Host UDP bridge, RGB-D perception (Orbbec Gemini 335), 3D lidar (Livox MID-360S), RTAB-Map mapping, Nav2, and frontier exploration."
   can_do:
     - "Walk via velocity commands over the Lite3 Motion Host UDP protocol (no transfer-node hop)."
-    - "Build a 2-D occupancy map from RGB-D (RTAB-Map) and navigate to 2D goals with Nav2."
+    - "Build a 2-D occupancy map from lidar + RGB-D (RTAB-Map) and navigate to 2D goals with Nav2."
     - "Run autonomous frontier exploration."
-    - "Capture RGB/depth frames and read front/rear ultrasonic distances."
+    - "Capture RGB/depth frames, read front/rear ultrasonic distances, and produce a planar 2D laser scan from the MID-360S."
   cannot_do:
-    - "Use a planar lidar — none is deployed; occupancy comes from registered depth."
     - "Accept pose-mode/gait/joint-position commands — move is velocity-only with hard safety limits (ADR-0003)."
     - "Provide global-correct odometry — leg odom drifts over long distance; relocalize within mapped areas."
     - "Audio I/O — no audio primitive is deployed."
   notes:
     - "The Motion Host is reached at 192.168.1.1:43893 / telemetry 43897 (DeepRobotics factory)."
     - "The Orbbec Gemini 335 vendor driver (orbbec_camera) must be started before `rbnx boot`."
-    - "URDF sensors (head camera + ultrasonics) are appended to the vendor body URDF; the vendor body URDF models only the quadruped."
+    - "The Livox MID-360S vendor driver (livox_ros_driver2) must be started before `rbnx boot`; both run in the same ROS 2 container/domain."
+    - "URDF sensors (head camera + ultrasonics + lidar) are appended to the vendor body URDF; the vendor body URDF models only the quadruped."

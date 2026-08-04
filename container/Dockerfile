@@ -15,15 +15,39 @@ FROM ${ROS_BASE_IMAGE}
 # / nav_msgs / urdf. Missing pieces for this deploy:
 #   - rmw_zenoh_cpp (verified apt-installable as ros-humble-rmw-zenoh-cpp 0.1.8)
 #   - the Orbbec SDK ROS 2 wrapper (orbbec_camera) for the Gemini 335
-# Both are baked into the IMAGE so they survive container recreation — installing
-# them via `docker exec` at runtime would only touch the container's writable
-# layer and be lost on `compose down`/recreate.
+#   - numpy (the camera + lidar drivers convert images / point clouds with it)
+# Both apt pieces are baked into the IMAGE so they survive container recreation —
+# installing them via `docker exec` at runtime would only touch the container's
+# writable layer and be lost on `compose down`/recreate.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ros-humble-rmw-zenoh-cpp \
         ros-humble-orbbec-camera \
         ros-humble-orbbec-description \
         python3-yaml \
+        python3-numpy \
+        git \
+        cmake \
+        build-essential \
+        python3-colcon-common-extensions \
     && rm -rf /var/lib/apt/lists/*
+
+# ── Livox SDK2 + livox_ros_driver2 (MID-360S lidar) ─────────────────────────
+# Not an apt package — built from source (colcon). livox_ros_driver2 v1.2.6+
+# supports MID-360S; it requires Livox-SDK2 >= v1.3.1. Both are baked into the
+# image so the lidar stack survives container recreation. The ROS2 driver build
+# (./build.sh humble) cd's up two levels, so the clone MUST live at
+# /livox_ws/src/livox_ros_driver2 (colcon workspace root = /livox_ws).
+RUN git clone --depth 1 --branch v1.3.1 https://github.com/Livox-SDK/Livox-SDK2.git /tmp/Livox-SDK2 \
+    && cd /tmp/Livox-SDK2 \
+    && mkdir -p build && cd build \
+    && cmake .. && make -j"$(nproc)" && make install \
+    && rm -rf /tmp/Livox-SDK2
+
+RUN mkdir -p /livox_ws/src \
+    && git clone --depth 1 https://github.com/Livox-SDK/livox_ros_driver2.git /livox_ws/src/livox_ros_driver2 \
+    && cd /livox_ws/src/livox_ros_driver2 \
+    && bash build.sh humble \
+    && rm -rf /livox_ws/build /livox_ws/log
 
 # Entrypoint: source ROS, bring up the zenoh router, start robot_state_publisher
 # with the Lite3 URDF, then stay alive so primitives can docker exec in.

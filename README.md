@@ -2,7 +2,8 @@
 
 A Robonix deployment package for the **DeepRobotics Jueying Lite3** quadruped
 (*Explorer* SKU: onboard monocular RGB + front/rear ultrasonics) augmented with
-an **external Orbbec Gemini 335 RGB-D camera** on `eth1` to enable SLAM.
+an **external Orbbec Gemini 335 RGB-D camera** on `eth1` and a **Livox MID-360S
+3D lidar** to enable SLAM + Nav2.
 
 ## What this package does
 
@@ -10,8 +11,9 @@ an **external Orbbec Gemini 335 RGB-D camera** on `eth1` to enable SLAM.
 | --- | --- |
 | Chassis | Speaks the Lite3 **Motion Host UDP protocol** directly (no `transfer` node hop) — `RobotState`/`JointState`/`Imu`/`Handle` telemetry from `:43897`, velocity commands to `:43893`. See [ADR-0001](docs/adr/0001-direct-udp-protocol.md). |
 | Perception | A single **RGB-D head** (Orbbec Gemini 335) supplies rgb + depth + CameraInfo; the `lite3_camera` primitive bridges the vendor driver and provides JPEG snapshots. See [ADR-0002](docs/adr/0002-single-rgbd-camera.md). |
-| Mapping / Nav / Explore | `service-map-rbnx` (RTAB-Map, `rgbd + odom`), `service-navigation-rbnx` (Nav2), `skill-explore-rbnx`. |
-| TF | `odometer → base_link → TORSO → … → head_camera_* / ultrasonic_*` from `primitive-robot-description-rbnx`. |
+| Lidar | **Livox MID-360S** 3D lidar via `livox_ros_driver2`; `lite3_lidar` slices the point cloud into a planar `/scan` (LaserScan) for Nav2/mapping. |
+| Mapping / Nav / Explore | `service-map-rbnx` (RTAB-Map, `lidar + rgbd + odom`), `service-navigation-rbnx` (Nav2), `skill-explore-rbnx`. |
+| TF | `odom → base_link → TORSO → … → head_camera_* / ultrasonic_* / lidar_link` published by `robot_state_publisher` inside the container. See [ADR-0004](docs/adr/0004-containerized-primitives-tf.md). |
 
 ## Hardware & network (DeepRobotics factory topology)
 
@@ -20,6 +22,7 @@ an **external Orbbec Gemini 335 RGB-D camera** on `eth1` to enable SLAM.
 | Motion Host (QNX) | **192.168.1.1** | Real-time leg control. Commands UDP `:43893`, telemetry UDP `:43897`. |
 | Perception host (Jetson) | **192.168.1.120** | Runs robonix + ROS 2; binds the telemetry socket, sends commands. |
 | Orbbec Gemini 335 | on `eth1` | External RGB-D head camera atop the onboard RGB. |
+| Livox MID-360S | UDP on the LAN | 3D lidar (360°×59°); default config IP 192.168.1.100, data on the motion-network subnet. |
 
 > The package defaults assume a stock DeepRobotics network. If your unit uses a
 > different subnet, set `robot_ip` / the perception-host address in
@@ -29,7 +32,8 @@ an **external Orbbec Gemini 335 RGB-D camera** on `eth1` to enable SLAM.
 
 - **Host (Thor):** bare L4T — runs only the robonix Rust system components.
 - `robonix_lite3_ros` docker container (built from `robonix-ros:humble-ros-base`
-  + `ros-humble-rmw-zenoh-cpp`): holds ROS 2 Humble + rclpy + rclcpp +
+  + `ros-humble-rmw-zenoh-cpp` + `ros-humble-orbbec-camera` + source-built
+  `livox_ros_driver2`): holds ROS 2 Humble + rclpy + rclcpp +
   `robot_state_publisher` + `tf2_ros`. All primitive processes run in it via
   `docker exec`. `--network host` + `--ipc host` so the zenoh ROS 2 graph is
   shared with the host's atlas and the mapping/nav2/scene containers.
@@ -37,6 +41,9 @@ an **external Orbbec Gemini 335 RGB-D camera** on `eth1` to enable SLAM.
   `rbnx boot`** (systemd unit or external launch, inside the same ROS 2 /
   zenoh domain). The `lite3_camera` primitive *bridges* that driver's topics;
   it does not spawn it.
+- `livox_ros_driver2` for the MID-360S — built into the image, **must be
+  launched before `rbnx boot`** in the same container/domain. `lite3_lidar`
+  slices its `/livox/lidar` point cloud into `/scan`.
 - RMW is `rmw_zenoh_cpp` with `ROS_DOMAIN_ID=0` (matches the working webots
   example and the sibling containers).
 
@@ -51,7 +58,8 @@ odom  (leg odometry, from Motion Host pos_world)
         │   ├── head_camera_rgb_optical_frame
         │   └── head_camera_depth_optical_frame
         ├── ultrasonic_front_link
-        └── ultrasonic_rear_link
+        ├── ultrasonic_rear_link
+        └── lidar_link        (MID-360S — /scan frame)
 ```
 
 `base_link → TORSO` is an identity fixed joint so the vendor joint limits are
@@ -89,6 +97,7 @@ from its entrypoint (ADR-0004).
 # 1. Build/package the robonix primitives (host-side codegen for proto/MCP stubs):
 rbnx validate ./primitives/lite3_chassis
 rbnx validate ./primitives/lite3_camera
+rbnx validate ./primitives/lite3_lidar
 rbnx build -f robonix_manifest.yaml     # expect Failed:0 / Skipped:0
 
 # 2. Bring up the ROS 2 container (builds the image, starts robot_state_publisher):
@@ -112,19 +121,31 @@ docker exec robonix_lite3_ros bash -lc '
     depth_width:=640 depth_height:=480 depth_fps:=30
 '
 
-# 4. Boot the robonix deployment — primitives docker-exec into the container:
+# 4. Start the Livox MID-360S vendor driver (out-of-band, same container/domain).
+#    livox_ros_driver2 is baked into the image. Edit MID360s_config.json for your
+#    lidar IP (default 192.168.1.100) + host, then launch (PointCloud2 mode):
+docker exec robonix_lite3_ros bash -lc '
+  source /opt/ros/humble/setup.bash
+  source /livox_ws/install/setup.bash
+  ros2 launch livox_ros_driver2 msg_MID360s_launch.py
+'
+
+# 5. Boot the robonix deployment — primitives docker-exec into the container:
 rbnx boot -f robonix_manifest.yaml
-rbnx caps -v                            # expect lite3_chassis / lite3_camera ACTIVE
+rbnx caps -v                            # expect lite3_chassis/camera/lidar ACTIVE
 rbnx logs -t soma -l warn
 
-# 5. Inside the container, confirm protocol parsing + TF:
+# 6. Inside the container, confirm protocol parsing + TF + scans:
 docker exec robonix_lite3_ros ros2 topic echo /odom --once
 docker exec robonix_lite3_ros ros2 run tf2_ros tf2_echo odom base_link
 docker exec robonix_lite3_ros ros2 topic echo /ultrasound/front --once
+docker exec robonix_lite3_ros ros2 topic echo /scan --once
 ```
 
 If `/odom` is empty: check the Motion Host IP/subnet, and that UDP `:43897` on
 the perception host is free (the official `transfer` node must not be running).
+If `/scan` is empty: check the MID-360S IP in `MID360s_config.json` and that the
+lidar is reachable from the host network.
 
 ## Package layout
 
@@ -136,13 +157,13 @@ config/                   rtabmap_params.yaml, nav2_params.yaml
 container/                the robonix_lite3_ros container (compose/Dockerfile/start.sh)
 primitives/lite3_chassis/ Motion-Host UDP driver (docker-exec'd into the container)
 primitives/lite3_camera/  RGB-D topic bridge + snapshot (docker-exec'd into the container)
+primitives/lite3_lidar/   MID-360S PointCloud2 → /scan slice (docker-exec'd into the container)
 docs/adr/                 architectural decisions
 CONTEXT.md                project glossary
 ```
 
 ## Known limits (also in `soma.yaml description.cannot_do`)
 
-- No planar lidar — occupancy comes from registered depth.
 - `move` is velocity-only; pose/gait/joint commands are out of scope.
 - Leg odometry drifts over long distance; relocalize within mapped areas.
 - No audio primitive is deployed.

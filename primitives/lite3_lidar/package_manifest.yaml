@@ -1,0 +1,51 @@
+manifestVersion: 1
+package:
+  name: com.robonix.deeprobotics.lite3_lidar
+  version: 0.1.0
+  vendor: syswonder <dev@syswonder.org>
+  description: >
+    Lite3 lidar primitive — Livox MID-360S 3D lidar → 2D LaserScan. Consumes the
+    vendor livox_ros_driver2 PointCloud2 (/livox/lidar), slices a horizontal
+    band, and publishes /scan (LaserScan) + robonix snapshot. The vendor driver
+    runs in the same container/ROS domain (ADR-0004).
+  license: MulanPSL-2.0
+  tags: [lidar, mid360s, livox, deeprobotics, lite3]
+  maintainers:
+    - "syswonder <dev@syswonder.org>"
+
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+stop: pkill -TERM -f "[l]ite3_lidar" 2>/dev/null || true
+
+capabilities:
+  - name: robonix/primitive/lidar/lidar
+  - name: robonix/primitive/lidar/snapshot
+  - name: robonix/primitive/lidar/driver
+
+config.spec:
+  cloud_topic:
+    type: string
+    default: /livox/lidar
+    description: "Vendor PointCloud2 topic (livox_ros_driver2)."
+  scan_topic:
+    type: string
+    default: /scan
+    description: "Output 2D LaserScan topic consumed by Nav2/mapping."
+  frame_id:
+    type: string
+    default: lidar_link
+    description: "TF frame of the output scan (must exist in the URDF)."
+  band_m:
+    type: float
+    default: 0.15
+    description: "Half-height of the horizontal slice band around the lidar plane (m)."
+  range_min_m: { type: float, default: 0.1, description: "Minimum scan range (m)." }
+  range_max_m: { type: float, default: 40.0, description: "Maximum scan range (m)." }
+  bins:
+    type: int
+    default: 720
+    description: "Number of azimuth bins across 360° (0.5°/bin at default)."
+  sentinel_timeout_s:
+    type: float
+    default: 30.0
+    description: "Seconds `init` waits for the first PointCloud2 before failing."

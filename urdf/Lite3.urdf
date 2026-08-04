@@ -537,4 +537,20 @@
         <child link="ultrasonic_rear_link"/>
         <origin xyz="-0.25 0 0.05" rpy="3.1415927 0 0"/>
     </joint>
+
+    <!-- ── Livox MID-360S 3D lidar ───────────────────────────────────────── -->
+    <!-- Mounted on top of the torso, facing up/out for a full 360° horizontal
+         FOV. Origin is an ESTIMATE — measure the physical mount and update. -->
+    <link name="lidar_link">
+        <inertial>
+            <origin/>
+            <mass value="0.001"/>
+            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+        </inertial>
+    </link>
+    <joint name="TORSO_to_lidar" type="fixed">
+        <parent link="TORSO"/>
+        <child link="lidar_link"/>
+        <origin xyz="0 0 0.30" rpy="0 0 0"/>
+    </joint>
 </robot>

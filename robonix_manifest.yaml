@@ -4,13 +4,14 @@ name: robot-deeprobotics-lite3
 # §1 catalog marker — required for community hardware package release.
 catalog:
   name: DeepRobotics Lite3 (Explorer)
-  version: 0.2.0
+  version: 0.3.0
   description: >
     DeepRobotics Jueying Lite3 quadruped (Explorer SKU) deployment: direct UDP
     bridge to the Motion Host (no transfer-node hop), RGB-D perception via an
-    external Orbbec Gemini 335 on eth1, mapping + Nav2 + frontier exploration.
+    external Orbbec Gemini 335 on eth1, 3D perception via a Livox MID-360S,
+    mapping + Nav2 + frontier exploration.
   license: MulanPSL-2.0
-  tags: [quadruped, legged, deeprobotics, lite3, rgbd, nav2]
+  tags: [quadruped, legged, deeprobotics, lite3, rgbd, mid360s, lidar, nav2]
   maintainers:
     - name: syswonder
       email: dev@syswonder.org
@@ -66,6 +67,22 @@ primitive:
       # First-frame sentinel: the Orbbec driver is racy on cold boot.
       sentinel_timeout_s: 150
 
+  - name: lite3_lidar
+    path: ./primitives/lite3_lidar
+    config:
+      # Livox MID-360S via livox_ros_driver2 (colcon package, baked into the
+      # image). The vendor node MUST be running before `rbnx boot` (same
+      # container/ROS domain). It publishes /livox/lidar (PointCloud2); this
+      # primitive slices it into /scan (LaserScan) for Nav2/mapping.
+      cloud_topic: /livox/lidar
+      scan_topic: /scan
+      frame_id: lidar_link
+      band_m: 0.15
+      range_min_m: 0.1
+      range_max_m: 40.0
+      bins: 720
+      sentinel_timeout_s: 30
+
 # ── services (booted after primitives) ───────────────────────────────────────
 service:
   - name: memory
@@ -74,23 +91,25 @@ service:
       backend: sqlite
 
   # Mapping publishes the occupancy / point cloud / pose contracts consumed by
-  # Navigation and Scene. RGB-D + leg odom (ADR-0002); Lite3 has no lidar.
+  # Navigation and Scene. RGB-D + leg odom (ADR-0002), now fused with the
+  # MID-360S planar lidar slice — lidar gives a reliable 2-D occupancy source and
+  # RGB-D adds appearance for scene/3D fusion.
   - name: mapping
     url: https://github.com/syswonder/service-map-rbnx
     branch: main
     config:
-      # Lite3 carries no planar lidar; occupancy comes from registered depth.
-      occupancy_sources: [depth]
-      rtabmap_inputs: [rgbd, odom]
+      # Both lidar (MID-360S) and depth (Gemini 335) feed the occupancy grid.
+      occupancy_sources: [lidar, depth]
+      rtabmap_inputs: [lidar, rgbd, odom]
       params_file: config/rtabmap_params.yaml
       sensor_providers:
+        lidar2d: lite3_lidar
         rgb: lite3_camera
         depth: lite3_camera
         odom: lite3_chassis
 
-  # Nav2 wrapper — discovers /map (mapping), /odom (chassis), RGB (camera) through
-  # atlas and drives /cmd_vel via the navigate_to_pose action. Lite3 has no
-  # /scan; costmaps use depth-derived obstacles, not a lidar scan.
+  # Nav2 wrapper — discovers /map (mapping), /odom (chassis), /scan (lidar)
+  # through atlas and drives /cmd_vel via the navigate_to_pose action.
   - name: nav2
     url: https://github.com/syswonder/service-navigation-rbnx
     branch: main
@@ -100,7 +119,7 @@ service:
       provider_ids:
         map: mapping
         odom: lite3_chassis
-        # No lidar scan provider; nav2_params must be tuned for depth obstacles.
+        scan: lite3_lidar
 
 # ── skills (registered but not auto-activated) ──────────────────────────────
 skill:

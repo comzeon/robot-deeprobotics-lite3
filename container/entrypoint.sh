@@ -9,6 +9,10 @@
 # exec's their drivers into THIS container after it is up (ADR-0004).
 set -eo pipefail
 source /opt/ros/humble/setup.bash
+# Livox ROS driver 2 (MID-360S) colcon overlay — build.sh humble installs here.
+if [ -f /livox_ws/install/setup.bash ]; then
+  source /livox_ws/install/setup.bash
+fi
 set -u
 
 # Allow `docker run -- <cmd>` to override the entrypoint (used by compose

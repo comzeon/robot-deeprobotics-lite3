@@ -1,7 +1,8 @@
-# Nav2 parameters for Lite3 (Explorer) — no lidar; depth-derived obstacles.
+# Nav2 parameters for Lite3 (Explorer).
 # base frame is base_link (robonix motion root); the vendor TORSO is a fixed
-# child of base_link (see urdf/Lite3.urdf). There is no /scan: costmap obstacle
-# layers must live on depth/pointcloud sources, not a planar lidar scan.
+# child of base_link (see urdf/Lite3.urdf). The 2D scan comes from the Livox
+# MID-360S (sliced by lite3_lidar) on /scan; the costmap obstacle layer uses
+# that planar scan.
 amcl:
   ros__parameters:
     use_sim_time: false
@@ -12,8 +13,6 @@ amcl:
     alpha5: 0.2
     base_frame_id: base_link
     odom_frame_id: odom
-    # Lite3 has no planar lidar; AMCL laser_* params are inert. Localise via the
-    # RGB-D map only; tune scan_topic if a /scan source is added later.
     scan_topic: /scan
 
 bt_navigator:
@@ -32,7 +31,7 @@ local_costmap:
       global_frame: odom
       robot_base_frame: base_link
       footprint_padding: 0.02
-      # No /scan obstacle layer; leave the depth/pointcloud source to mapping.
+      # /scan obstacle layer from the MID-360S planar slice.
 
 global_costmap:
   global_costmap:

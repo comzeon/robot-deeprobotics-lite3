@@ -54,9 +54,10 @@
 - [x] soma 导出改为 `nav2` / `explore`，逐字等于 manifest 实例名；删除原 `lite3_nav2`/`skill_explore`/`lite3_audio` 引用。
 
 ### 10. 建图/导航服务接线 ✅
-- [x] manifest 新增 `service.mapping`（`rtabmap_inputs:[rgbd,odom]`、`occupancy_sources:[depth]`、`sensor_providers: {rgb: lite3_camera, depth: lite3_camera, odom: lite3_chassis}`）。
-- [x] manifest 新增 `service.nav2`（`provider_ids: {map: mapping, odom: lite3_chassis}`）。
-- [x] 无 lidar 前提写进 soma `cannot_do` 与 README、nav2_params 注释。→ ADR-0002
+- [x] manifest 新增 `service.mapping`（`rtabmap_inputs:[lidar,rgbd,odom]`、`occupancy_sources:[lidar,depth]`、`sensor_providers: {lidar2d: lite3_lidar, rgb: lite3_camera, depth: lite3_camera, odom: lite3_chassis}`）。
+- [x] manifest 新增 `service.nav2`（`provider_ids: {map: mapping, odom: lite3_chassis, scan: lite3_lidar}`）。
+- [x] 新增 `lite3_lidar` 原语：订阅 MID-360S 的 `/livox/lidar`(PointCloud2) → 水平带切片成 `/scan`(LaserScan)，导出 `robonix/primitive/lidar/{lidar,snapshot,driver}`。
+- [x] `nav2_params.yaml` 的 `/scan` 障碍层改为真实 lidar；`soma` 增 `lidar_2d` 组件(`urdf_link: lidar_link`)。→ ADR-0002 / ADR-0004
 
 ### 11. `robot_description` / TF 发布方 ✅ → 已改为容器化
 - [x] **不使用** 外部 `primitive-robot-description-rbnx`（裸 L4T 主机无 `/opt/ros/humble`，其 build.sh 必失败）。改为在 `robonix_lite3_ros` 容器内由 `robot_state_publisher` 发布 URDF 固定 TF 链（`base_link`→`TORSO`→`head_camera_*`/`ultrasonic_*`）。→ ADR-0004
@@ -98,6 +99,12 @@
 
 ### 19. 启动脚本硬编码 — 见 #17 ✅
 
+### 20. MID-360S 激光雷达接入 ✅
+- [x] `container/Dockerfile` 源码编译 `Livox-SDK2(v1.3.1)` + `livox_ros_driver2`（`build.sh humble` → colcon install 到 `/livox_ws/install`，打进镜像持久化）。
+- [x] `container/entrypoint.sh` source `/livox_ws/install/setup.bash`，容器内 `ros2 launch livox_ros_driver2` 可用。
+- [x] 新增 `primitives/lite3_lidar`（PointCloud2→LaserScan 切片原语，含 config.spec/start.sh docker exec/CAPABILITY.md）。
+- [x] manifest 接线 `lite3_lidar`（mapping `lidar2d` + nav2 `scan`）；soma `lidar_2d` 组件；URDF `lidar_link`（固定 TORSO，估计安装位姿）；README 接入步骤。
+
 ---
 
 ## 待你在实机上验证（我无法非交互登录）
@@ -106,17 +113,23 @@
 # 前提：host 100.72.167.58 是裸 L4T（无 ROS），原语与 robot_state_publisher 都在
 # robonix_lite3_ros 容器里跑（ADR-0004）。
 rbnx validate ./primitives/lite3_chassis
+rbnx validate ./primitives/lite3_camera
+rbnx validate ./primitives/lite3_lidar
 rbnx build -f robonix_manifest.yaml          # 期望 Failed:0 / Skipped:0 / Built==Total
-bash container/start.sh                       # 先起容器（含 robot_state_publisher + zenohd）
+bash container/start.sh                       # 先起容器（含 robot_state_publisher + zenohd + livox SDK）
 # 起奥比中光 Gemini 335 驱动（systemd/launch，在容器或同 ROS2/zenoh 域）：
 #   systemd start orbbec_camera  (或你定的方式)
+# 起 Livox MID-360S 驱动（同域）：
+docker exec robonix_lite3_ros bash -lc 'source /opt/ros/humble/setup.bash; source /livox_ws/install/setup.bash; ros2 launch livox_ros_driver2 msg_MID360s_launch.py'
 rbnx boot -f robonix_manifest.yaml
-rbnx caps -v                                   # 期望 lite3_chassis/lite3_camera 为 ACTIVE
+rbnx caps -v                                   # 期望 lite3_chassis/lite3_camera/lite3_lidar 为 ACTIVE
 docker exec robonix_lite3_ros ros2 topic echo /odom --once          # 协议层唯一真值验证
 docker exec robonix_lite3_ros ros2 run tf2_ros tf2_echo odom base_link
 docker exec robonix_lite3_ros ros2 topic echo /ultrasound/front --once
+docker exec robonix_lite3_ros ros2 topic echo /scan --once          # 验证 MID-360S 切片
 # 协议若不通：核对运动主机 IP/网段、确认感知主机 43897 未被官方 transfer 占用、
 #            确认 rbnx 启动了容器（`docker ps | grep robonix_lite3`）。
+# /scan 为空：核对 MID360s_config.json 的 lidar IP（默认 192.168.1.100）+ host。
 ```
 
 ## 遗留未决（需你决定后我可继续）
