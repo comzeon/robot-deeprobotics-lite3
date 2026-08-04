@@ -16,9 +16,35 @@
 set -eo pipefail
 source /opt/ros/humble/setup.bash
 # Livox ROS driver 2 (MID-360S) colcon overlay — build.sh humble installs here.
-if [ -f /livox_ws/install/setup.bash ]; then
-  source /livox_ws/install/setup.bash
-fi
+# Guarantee it is on AMENT_PREFIX_PATH so `ros2 pkg prefix livox_ros_driver2`
+# resolves. Prefer sourcing setup.bash; fall back to exporting the vars directly
+# if the file is missing/unreadable (the Docker build VM runs colcon as root and
+# the runtime user may differ).
+ensure_livox_overlay() {
+  if [ -f /livox_ws/install/setup.bash ]; then
+    if [ -r /livox_ws/install/setup.bash ]; then
+      # shellcheck disable=SC1091
+      source /livox_ws/install/setup.bash
+    else
+      echo "[lite3_ros] WARN: /livox_ws/install/setup.bash unreadable — chmod + retry" >&2
+      chmod a+r /livox_ws/install/setup.bash /livox_ws/install/local_setup.* 2>/dev/null || true
+      # shellcheck disable=SC1091
+      source /livox_ws/install/setup.bash 2>&1 || true
+    fi
+  fi
+  # idempotent manual fallback — ensures discovery even if setup.bash is absent
+  case ":$AMENT_PREFIX_PATH:" in
+    *":/livox_ws/install:"*) : ;;
+    *) export AMENT_PREFIX_PATH="/livox_ws/install${AMENT_PREFIX_PATH:+:$AMENT_PREFIX_PATH}" ;;
+  esac
+  if [ -d /livox_ws/install/lib ]; then
+    case ":$LD_LIBRARY_PATH:" in
+      *":/livox_ws/install/lib:"*) : ;;
+      *) export LD_LIBRARY_PATH="/livox_ws/install/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ;;
+    esac
+  fi
+}
+ensure_livox_overlay
 set -u
 
 # Allow `docker run -- <cmd>` to override the entrypoint (used by compose
@@ -88,10 +114,19 @@ if [ ! -f "$RSP_URDF" ]; then
   echo "[lite3_ros] WARN: URDF not found at $RSP_URDF — TF tree will be empty" >&2
 fi
 
-URDF_CONTENT="$(cat "$RSP_URDF" 2>/dev/null || echo '<robot name=\"empty\"><link name=\"base_link\"/></robot>')"
+# Pass the URDF through a YAML params file, NOT `-p robot_description:="..."`.
+# A multiline URDF as a CLI --ros-args -p value trips ROS2's parameter parser
+# (this crashed robot_state_publisher at startup, ExitCode 250). Writing it into
+# a YAML block scalar and using --params-file is robust.
+RSP_PARAMS=/tmp/rsp_params.yaml
+{
+  printf 'robot_state_publisher:\n  ros__parameters:\n    robot_description: |\n'
+  # indent every URDF line so YAML block-scalar preserves the content verbatim
+  sed 's/^/      /' "$RSP_URDF" 2>/dev/null || printf '      <robot/>\n'
+} > "$RSP_PARAMS"
 
 ros2 run robot_state_publisher robot_state_publisher \
-  --ros-args -p robot_description:="$URDF_CONTENT" \
+  --ros-args --params-file "$RSP_PARAMS" \
   -r __ns:=/ >/tmp/robot_state_publisher.log 2>&1 &
 RSP_PID=$!
 _children+=("$RSP_PID")
