@@ -1,0 +1,96 @@
+manifestVersion: 1
+name: robot-deeprobotics-lite3
+catalog:
+  name: DeepRobotics Lite3 (Explorer)
+  version: 0.3.0
+  description: 'DeepRobotics Jueying Lite3 quadruped (Explorer SKU) deployment: direct
+    UDP bridge to the Motion Host (no transfer-node hop), RGB-D perception via an
+    external Orbbec Gemini 335 on eth1, 3D perception via a Livox MID-360S, mapping
+    + Nav2 + frontier exploration.
+
+    '
+  license: MulanPSL-2.0
+  tags:
+  - quadruped
+  - legged
+  - deeprobotics
+  - lite3
+  - rgbd
+  - mid360s
+  - lidar
+  - nav2
+  maintainers:
+  - name: syswonder
+    email: dev@syswonder.org
+env:
+  ROS_DOMAIN_ID: '0'
+  RMW_IMPLEMENTATION: rmw_zenoh_cpp
+primitive:
+- name: lite3_chassis
+  path: ./primitives/lite3_chassis
+  config:
+    odom_source: /leg_odom2
+    odom_topic: /odom
+    cmd_vel_topic: /cmd_vel
+    move_duration_sec: 1.0
+service:
+- name: memory
+  path: ${ROBONIX_SOURCE_PATH}/services/memsearch
+  config:
+    backend: sqlite
+- name: mapping
+  url: https://github.com/syswonder/service-map-rbnx
+  branch: main
+  config:
+    occupancy_sources:
+    - lidar
+    - depth
+    rtabmap_inputs:
+    - lidar
+    - rgbd
+    - odom
+    params_file: config/rtabmap_params.yaml
+    sensor_providers:
+      lidar2d: lite3_lidar
+      rgb: lite3_camera
+      depth: lite3_camera
+      odom: lite3_chassis
+- name: nav2
+  url: https://github.com/syswonder/service-navigation-rbnx
+  branch: main
+  config:
+    params_file: config/nav2_params.yaml
+    action_wait_s: 240.0
+    provider_ids:
+      map: mapping
+      odom: lite3_chassis
+      scan: lite3_lidar
+skill:
+- name: explore
+  url: https://github.com/syswonder/skill-explore-rbnx
+  branch: main
+  config:
+    explore_mode: frontier
+    timeout_s: 600
+system:
+  atlas:
+    listen: 0.0.0.0:50051
+    log: info
+  executor:
+    listen: 127.0.0.1:50061
+    log: info
+  liaison:
+    listen: 0.0.0.0:50081
+    log: info
+  pilot:
+    listen: 127.0.0.1:50071
+    log: debug
+    vlm:
+      api_format: openai
+      api_key: ${VLM_API_KEY}
+      model: ${VLM_MODEL}
+      upstream: ${VLM_BASE_URL}
+  scene:
+    log: info
+    camera_frame: head_camera_rgb_optical_frame
+services: []

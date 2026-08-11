@@ -4,12 +4,13 @@ package:
   version: 0.2.0
   vendor: syswonder <dev@syswonder.org>
   description: >
-    Lite3 quadruped chassis driver — direct Motion Host UDP bridge (no transfer
-    node). Receives RobotState/JointState/Imu/HandleState telemetry, publishes
-    /odom + /joint_states + /ultrasound, accepts /cmd_vel and the
-    robonix/primitive/chassis/move rpc (velocity-only, hard-clamped). See ADR-0001.
+    Lite3 quadruped chassis driver — ROS 2 topic bridge over the official
+    `transfer` node (which owns the Motion-Host UDP sockets). Relays transfer's
+    /leg_odom2 to /odom, publishes move() velocity bursts on /cmd_vel
+    (velocity-only, hard-clamped), and exposes the twist_in subscription.
+    See ADR-0005.
   license: MulanPSL-2.0
-  tags: [quadruped, chassis, udp, deeprobotics, lite3]
+  tags: [quadruped, chassis, bridge, deeprobotics, lite3]
   maintainers:
     - "syswonder <dev@syswonder.org>"
 
@@ -25,30 +26,25 @@ capabilities:
   - name: robonix/primitive/chassis/odom
   - name: robonix/primitive/chassis/twist_in
   - name: robonix/primitive/chassis/driver
+  - name: robonix/primitive/chassis/stand
+  - name: robonix/primitive/chassis/down
+  - name: robonix/primitive/chassis/stop
 
 # Onboarding §4.2/§8: documented public config fields.
 config.spec:
-  robot_ip:
+  odom_source:
     type: string
-    default: "192.168.1.1"
-    description: "Motion Host (QNX) IP. DeepRobotics factory default 192.168.1.1."
-  cmd_port:
-    type: int
-    default: 43893
-    description: "Motion Host command port (UDP). Commands sent here."
-  state_port:
-    type: int
-    default: 43897
-    description: "Telemetry listen port (UDP, bound on the perception host)."
-  base_frame:
-    type: string
-    default: base_link
-    description: "Child frame of /odom; TF published by primitive-robot-description-rbnx."
+    default: /leg_odom2
+    description: "Official `transfer` node's leg odom+twist topic (nav_msgs/Odometry), bridged verbatim to /odom."
   odom_topic:
     type: string
     default: /odom
-    description: "nav_msgs/Odometry output topic."
+    description: "nav_msgs/Odometry output topic (odom capability)."
   cmd_vel_topic:
     type: string
     default: /cmd_vel
-    description: "geometry_msgs/Twist input topic (velocity set-point)."
+    description: "geometry_msgs/Twist topic the `transfer` node subscribes to; move() velocity bursts are published here."
+  move_duration_sec:
+    type: float
+    default: 1.0
+    description: "Default length (s) of a single move() velocity burst before an explicit stop is published."

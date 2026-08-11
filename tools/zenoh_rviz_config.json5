@@ -1,0 +1,15 @@
+/// rviz viewer zenoh session: connect as client to the lite3_ros router
+/// (host network, so localhost:7447 reaches the main container's rmw_zenohd).
+/// Router provides transient-local storage so /tf_static latched data is
+/// delivered to this long-lived process (peer mode would miss it -> no TF ->
+/// point clouds invisible in rviz).
+{
+  mode: "client",
+  connect: {
+    timeout_ms: 10000,
+    endpoints: ["tcp/localhost:7447"]
+  },
+  listen: {
+    endpoints: []
+  }
+}

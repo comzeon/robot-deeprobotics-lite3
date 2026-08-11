@@ -7,12 +7,17 @@
 #   2. robot_state_publisher  (the single TF publisher for the URDF fixed chain)
 #   3. orbbec_camera driver  (Gemini 335 RGB-D)   — vendor, out-of-band
 #   4. livox_ros_driver2     (MID-360S lidar)     — vendor, out-of-band
+#   5. transfer              (official Lite3 Motion-Host UDP bridge; ADR-0005)
 # then stays alive so `rbnx boot` docker exec's the robonix primitives
 # (lite3_chassis / lite3_camera / lite3_lidar) into THIS container (ADR-0004).
 #
 # The vendor drivers are optional: if the hardware is absent (bring-up / bench),
 # set LITE3_ENABLE_ORBBEC=0 / LITE3_ENABLE_LIVOX=0 to skip them — the entrypoint
-# logs a WARN and continues so the chassis-only environment still comes up.
+# logs a WARN and continues so the chassis-only environment still comes up. The
+# official `transfer` node is likewise optional: it must be colcon-built into
+# the image (foxy branch adapted to Humble) before `ros2 pkg prefix transfer`
+# resolves; until then the entrypoint WARNs and lite3_chassis stays a topic
+# bridge with no Motion-Host peer (set LITE3_ENABLE_TRANSFER=0 to silence).
 set -eo pipefail
 source /opt/ros/humble/setup.bash
 # Livox ROS driver 2 (MID-360S) colcon overlay — build.sh humble installs here.
@@ -164,6 +169,24 @@ start_livox() {
   if [ ! -f "$user_config" ]; then
     echo "[lite3_ros] WARN: livox config not found at $user_config — using in-image default" >&2
     user_config=""
+  else
+    # livox's launch file hardcodes user_config_path to its in-image ../config
+    # (command-line user_config_path:= is ignored), so overlay the host-editable
+    # config onto the in-image path. Survives container recreation because this
+    # runs on every start.
+    local img_cfg=/livox_ws/install/livox_ros_driver2/share/livox_ros_driver2/config/MID360s_config.json
+    if [ -f "$img_cfg" ]; then
+      cp "$user_config" "$img_cfg"
+      echo "[lite3_ros] livox config overlaid onto in-image path ($img_cfg)" >&2
+    fi
+  fi
+  # Publish the point cloud directly in the URDF frame (lidar_link) instead of
+  # livox's hardcoded 'livox_frame' — avoids a cross-container static-TF hop
+  # that rviz's TF buffer misses on cold start (rviz shows no cloud).
+  local launch_py=/livox_ws/install/livox_ros_driver2/share/livox_ros_driver2/launch_ROS2/msg_MID360s_launch.py
+  if [ -f "$launch_py" ]; then
+    sed -i "s/frame_id      = 'livox_frame'/frame_id      = 'lidar_link'/" "$launch_py"
+    echo "[lite3_ros] livox frame_id overlaid -> lidar_link" >&2
   fi
   ros2 launch livox_ros_driver2 msg_MID360s_launch.py \
     ${user_config:+user_config_path:="$user_config"} \
@@ -173,15 +196,64 @@ start_livox() {
   echo "[lite3_ros] livox_ros_driver2 pid=${LIVOX_PID} (config=$user_config, log=$log)"
 }
 
+# ── vendor bridge: official DeepRobotics `transfer` (Motion-Host UDP) ────────
+# The ONLY owner of the Motion-Host UDP sockets (:43893 commands / :43897
+# telemetry). lite3_chassis is a pure ROS 2 topic bridge over its topics
+# (ADR-0005). Built into the image from the foxy branch adapted to Humble
+# (colcon); until it is present, the chassis primitive stays bridgeless and the
+# entrypoint WARNs instead of failing.
+start_transfer() {
+  local log=/tmp/transfer.log
+  # tf2_geometry_msgs foxy→humble shim: the foxy `transfer` build includes
+  # tf2_geometry_msgs/tf2_geometry_msgs.h (flat), but humble ships .hpp under a
+  # doubled include dir and its CMake config does not propagate the include
+  # path. The container writable layer is lost on recreate, so rebuild the two
+  # symlinks on every start (idempotent). The colcon build needs
+  # -DCMAKE_CXX_FLAGS=-I/opt/ros/humble/include too.
+  local tfg=/opt/ros/humble/include/tf2_geometry_msgs
+  if [ -d "$tfg/tf2_geometry_msgs" ]; then
+    ln -sfn tf2_geometry_msgs/tf2_geometry_msgs.h "$tfg/tf2_geometry_msgs.h"
+    ln -sfn tf2_geometry_msgs/tf2_geometry_msgs.hpp "$tfg/tf2_geometry_msgs.hpp"
+  fi
+  # The transfer overlay is colcon-built into the bind-mounted /robonix_pkgs
+  # (host dir, survives container recreation), NOT baked into the image — make
+  # it discoverable before the prefix check below. `set -u` is active here and
+  # colcon's setup.bash references COLCON_TRACE (unbound) — source under set +u.
+  if [ -f /robonix_pkgs/Lite3_ROS/install/setup.bash ]; then
+    set +u
+    # shellcheck disable=SC1091
+    source /robonix_pkgs/Lite3_ROS/install/setup.bash
+    set -u
+  fi
+  if ! ros2 pkg prefix transfer >/dev/null 2>&1; then
+    echo "[lite3_ros] transfer (official Lite3 Motion-Host bridge) not installed — chassis velocity/odom bridging disabled" >&2
+    echo "[lite3_ros]   build the adapted foxy branch into the image, or set LITE3_ENABLE_TRANSFER=0 to silence" >&2
+    return 0
+  fi
+  # launch file is transfer_launch.py in the repo's launch/ dir (installed
+  # verbatim by CMake install(DIRECTORY launch ...)).
+  ros2 launch transfer transfer_launch.py >"$log" 2>&1 &
+  TRANSFER_PID=$!
+  _children+=("$TRANSFER_PID")
+  echo "[lite3_ros] transfer pid=${TRANSFER_PID} (log=$log)"
+}
+
 if [ "${LITE3_ENABLE_ORBBEC:-1}" = "1" ]; then start_orbbec; else
   echo "[lite3_ros] orbbec_camera disabled (LITE3_ENABLE_ORBBEC=0)" >&2
 fi
 if [ "${LITE3_ENABLE_LIVOX:-1}" = "1" ]; then start_livox; else
   echo "[lite3_ros] livox_ros_driver2 disabled (LITE3_ENABLE_LIVOX=0)" >&2
 fi
+if [ "${LITE3_ENABLE_TRANSFER:-1}" = "1" ]; then start_transfer; else
+  echo "[lite3_ros] transfer disabled (LITE3_ENABLE_TRANSFER=0)" >&2
+fi
 
 # Stay alive so `rbnx boot` driver packages can docker exec in. SIGTERM from
 # `compose down` reaches us via the trap, killing all children. If robot_state_
 # publisher dies (the primary TF source), exit so a broken TF tree is obvious.
 echo "[lite3_ros] environment ready — primitives may docker exec now"
+if [ -x /robonix_pkgs/container/sensor_watchdog.sh ]; then
+  nohup /robonix_pkgs/container/sensor_watchdog.sh >/dev/null 2>&1 &
+  echo "[lite3_ros] sensor watchdog started"
+fi
 wait "$RSP_PID"

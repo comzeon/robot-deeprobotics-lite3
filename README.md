@@ -9,7 +9,7 @@ an **external Orbbec Gemini 335 RGB-D camera** on `eth1` and a **Livox MID-360S
 
 | Layer | Mechanism |
 | --- | --- |
-| Chassis | Speaks the Lite3 **Motion Host UDP protocol** directly (no `transfer` node hop) — `RobotState`/`JointState`/`Imu`/`Handle` telemetry from `:43897`, velocity commands to `:43893`. See [ADR-0001](docs/adr/0001-direct-udp-protocol.md). |
+| Chassis | ROS 2 topic bridge over the **official `transfer` node** — `transfer` owns the Motion-Host UDP sockets (`RobotState`/`JointState`/`Imu`/`Handle` telemetry from `:43897`, velocity commands to `:43893`); `lite3_chassis` relays `/leg_odom2`→`/odom` and publishes `move()` velocity bursts on `/cmd_vel`. See [ADR-0005](docs/adr/0005-topic-bridge-chassis.md). |
 | Perception | A single **RGB-D head** (Orbbec Gemini 335) supplies rgb + depth + CameraInfo; the `lite3_camera` primitive bridges the vendor driver and provides JPEG snapshots. See [ADR-0002](docs/adr/0002-single-rgbd-camera.md). |
 | Lidar | **Livox MID-360S** 3D lidar via `livox_ros_driver2`; `lite3_lidar` slices the point cloud into a planar `/scan` (LaserScan) for Nav2/mapping. |
 | Mapping / Nav / Explore | `service-map-rbnx` (RTAB-Map, `lidar + rgbd + odom`), `service-navigation-rbnx` (Nav2), `skill-explore-rbnx`. |
@@ -20,13 +20,14 @@ an **external Orbbec Gemini 335 RGB-D camera** on `eth1` and a **Livox MID-360S
 | Host | IP | Role |
 | --- | --- | --- |
 | Motion Host (QNX) | **192.168.1.1** | Real-time leg control. Commands UDP `:43893`, telemetry UDP `:43897`. |
-| Perception host (Jetson) | **192.168.1.120** | Runs robonix + ROS 2; binds the telemetry socket, sends commands. |
+| Perception host (Jetson) | **192.168.1.120** | Runs robonix + ROS 2; the official `transfer` node binds the telemetry socket and sends commands. |
 | Orbbec Gemini 335 | on `eth1` | External RGB-D head camera atop the onboard RGB. |
 | Livox MID-360S | UDP on the LAN | 3D lidar (360°×59°); default config IP 192.168.1.100, data on the motion-network subnet. |
 
 > The package defaults assume a stock DeepRobotics network. If your unit uses a
-> different subnet, set `robot_ip` / the perception-host address in
-> `robonix_manifest.yaml` before boot.
+> different subnet, set the Motion-Host IP and the telemetry target in the
+> official `transfer` node's network config before boot (the Motion Host sends
+> telemetry to the perception host's IP).
 
 ## Computing platform / dependencies
 
@@ -78,9 +79,10 @@ The chassis `move` capability is **velocity-only** with hard in-code limits
 | `max_ang_z` (yaw) | **1.5 rad/s** |
 | No-input stop | **0.5 s** without a velocity command ⇒ zero velocity sent |
 
-- The driver **never** emits joint-position / pose / gait commands.
-- The Motion Host stops the robot when velocity packets stop arriving; the
-  primitive additionally sends explicit zero velocity on the no-input timeout.
+- The `transfer` node **never** emits joint-position / pose / gait commands
+  (velocity-only).
+- The Motion Host stops the robot when velocity packets stop arriving; `move()`
+  additionally publishes an explicit zero at the end of every velocity burst.
 - **First motion test:** confirm the physical E-stop works, operate in an open
   area, and keep a finger on the app's manual-mode fallback. Do NOT do a first
   `move` test from the LLM until you have verified `/odom` is updating and the
@@ -106,9 +108,14 @@ sudo cp /opt/ros/humble/share/orbbec_camera/udev/99-obsensor-libusb.rules /etc/u
 sudo udevadm control --reload-rules && sudo udevadm trigger
 
 # 3. Bring up the ROS 2 container. The entrypoint starts the WHOLE environment:
-#    zenoh router + robot_state_publisher + orbbec_camera + livox_ros_driver2.
+#    zenoh router + robot_state_publisher + orbbec_camera + livox_ros_driver2
+#    + the official `transfer` node (the Motion-Host UDP bridge, ADR-0005).
+#    `transfer` must be colcon-built into the image first (foxy branch adapted
+#    to Humble) — until then the chassis primitive stays a topic bridge with no
+#    Motion-Host peer and the entrypoint WARNs (not fails).
 #    Hardware absent / bring-up? Disable a vendor driver with
-#    LITE3_ENABLE_ORBBEC=0 / LITE3_ENABLE_LIVOX=0 (start.sh passes them through).
+#    LITE3_ENABLE_ORBBEC=0 / LITE3_ENABLE_LIVOX=0 / LITE3_ENABLE_TRANSFER=0
+#    (start.sh passes them through).
 bash container/start.sh
 #    (stop with: bash container/stop.sh)
 #    start.sh waits for robot_state_publisher + the two vendor topics, WARNs
@@ -119,19 +126,20 @@ rbnx boot -f robonix_manifest.yaml
 rbnx caps -v                            # expect lite3_chassis/camera/lidar ACTIVE
 rbnx logs -t soma -l warn
 
-# 5. Inside the container, confirm protocol parsing + TF + scans:
+# 5. Inside the container, confirm bridging + TF + scans:
 docker exec robonix_lite3_ros ros2 topic echo /odom --once
 docker exec robonix_lite3_ros ros2 run tf2_ros tf2_echo odom base_link
-docker exec robonix_lite3_ros ros2 topic echo /ultrasound/front --once
+docker exec robonix_lite3_ros ros2 topic echo /leg_odom2 --once   # raw transfer odom
 docker exec robonix_lite3_ros ros2 topic echo /scan --once
 ```
 
-If `/odom` is empty: check the Motion Host IP/subnet, and that UDP `:43897` on
-the perception host is free (the official `transfer` node must not be running).
-If `/scan` is empty: check the MID-360S IP in `MID360s_config.json` and that the
-lidar is reachable from the host network; the vendor driver log is
+If `/odom` is empty: check the Motion Host IP/subnet, that the Motion Host is in
+AUTO mode, that the official `transfer` node is running (it is the only owner of
+UDP `:43897`), and that no `MotionSDK` process holds control. If `/scan` is
+empty: check the MID-360S IP in `MID360s_config.json` and that the lidar is
+reachable from the host network; the vendor driver log is
 `docker exec robonix_lite3_ros tail -80 /tmp/livox_ros_driver2.log` (orbbec:
-`/tmp/orbbec_camera.log`).
+`/tmp/orbbec_camera.log`; transfer: `/tmp/transfer.log`).
 
 ## Package layout
 
@@ -141,7 +149,7 @@ soma.yaml                 robot model + components + capability exports
 urdf/Lite3.urdf           vendor body + appended sensor links
 config/                   rtabmap_params.yaml, nav2_params.yaml
 container/                the robonix_lite3_ros container (compose/Dockerfile/start.sh)
-primitives/lite3_chassis/ Motion-Host UDP driver (docker-exec'd into the container)
+primitives/lite3_chassis/ ROS 2 topic bridge over the official transfer node (docker-exec'd into the container)
 primitives/lite3_camera/  RGB-D topic bridge + snapshot (docker-exec'd into the container)
 primitives/lite3_lidar/   MID-360S PointCloud2 → /scan slice (docker-exec'd into the container)
 docs/adr/                 architectural decisions
@@ -151,5 +159,11 @@ CONTEXT.md                project glossary
 ## Known limits (also in `soma.yaml description.cannot_do`)
 
 - `move` is velocity-only; pose/gait/joint commands are out of scope.
+- Chassis motion requires the Motion Host in AUTO mode; a running `MotionSDK`
+  process (or the joint-level SDK) grabs control and makes velocity unresponsive.
+- The Nav2 `/cmd_vel` path is clamped by Nav2's controller and the Motion Host's
+  built-in limits, not by this primitive (ADR-0005).
 - Leg odometry drifts over long distance; relocalize within mapped areas.
+- No ultrasonic distance streaming — that telemetry lives inside the official
+  `transfer` node.
 - No audio primitive is deployed.

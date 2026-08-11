@@ -42,6 +42,9 @@ robot:
             - { path: robonix/primitive/chassis/odom, description: "Read leg odometry (nav_msgs/Odometry on /odom)." }
             - { path: robonix/primitive/chassis/twist_in, description: "Accept velocity commands on /cmd_vel." }
             - { path: robonix/primitive/chassis/driver, description: "Lifecycle driver." }
+            - { path: robonix/primitive/chassis/stand, description: "Stand the robot up (0x21010202). Robot must be lying down first." }
+            - { path: robonix/primitive/chassis/down, description: "Lie the robot down (0x21010203). Robot must be standing." }
+            - { path: robonix/primitive/chassis/stop, description: "Stop the current action (0x21010C0B)." }
       components:
         - id: fl_leg
           type: leg
@@ -76,23 +79,6 @@ robot:
             - { path: robonix/primitive/camera/extrinsics, description: "Camera extrinsics (latched TransformStamped)." }
             - { path: robonix/primitive/camera/driver, description: "Lifecycle driver." }
 
-    # Front/rear ultrasonic rangefinders (Lite3 Explorer factory sensors).
-    # Telemetry/obstacle awareness only — NOT a mapping/nav2 scan input (ADR-0002).
-    - id: ultrasonic_front
-      type: range_sensor
-      urdf_link: ultrasonic_front_link
-      exports:
-        - provider_id: lite3_chassis
-          capabilities:
-            - { path: robonix/primitive/chassis/ultrasound_front, description: "Front ultrasonic distance (sensor_msgs/Range)." }
-    - id: ultrasonic_rear
-      type: range_sensor
-      urdf_link: ultrasonic_rear_link
-      exports:
-        - provider_id: lite3_chassis
-          capabilities:
-            - { path: robonix/primitive/chassis/ultrasound_rear, description: "Rear ultrasonic distance (sensor_msgs/Range)." }
-
     # Livox MID-360S 3D lidar — sliced to a planar 2D scan by the lite3_lidar
     # primitive; the primary occupancy source for Nav2.
     - id: lidar
@@ -106,18 +92,19 @@ robot:
             - { path: robonix/primitive/lidar/driver, description: "Lifecycle driver." }
 
 description:
-  summary: "A DeepRobotics Lite3 (Explorer) deployment: direct Motion-Host UDP bridge, RGB-D perception (Orbbec Gemini 335), 3D lidar (Livox MID-360S), RTAB-Map mapping, Nav2, and frontier exploration."
+  summary: "A DeepRobotics Lite3 (Explorer) deployment: official `transfer` Motion-Host UDP bridge with a topic-bridge chassis primitive (ADR-0005), RGB-D perception (Orbbec Gemini 335), 3D lidar (Livox MID-360S), RTAB-Map mapping, Nav2, and frontier exploration."
   can_do:
-    - "Walk via velocity commands over the Lite3 Motion Host UDP protocol (no transfer-node hop)."
+    - "Walk via velocity commands: the official `transfer` node bridges /cmd_vel to the Motion Host UDP protocol (ADR-0005); move()/twist_in drive it."
     - "Build a 2-D occupancy map from lidar + RGB-D (RTAB-Map) and navigate to 2D goals with Nav2."
     - "Run autonomous frontier exploration."
-    - "Capture RGB/depth frames, read front/rear ultrasonic distances, and produce a planar 2D laser scan from the MID-360S."
+    - "Capture RGB/depth frames and produce a planar 2D laser scan from the MID-360S."
   cannot_do:
     - "Accept pose-mode/gait/joint-position commands — move is velocity-only with hard safety limits (ADR-0003)."
     - "Provide global-correct odometry — leg odom drifts over long distance; relocalize within mapped areas."
+    - "Stream ultrasonic distances — that telemetry lives inside the official `transfer` node (ADR-0005)."
     - "Audio I/O — no audio primitive is deployed."
   notes:
-    - "The Motion Host is reached at 192.168.1.1:43893 / telemetry 43897 (DeepRobotics factory)."
+    - "The Motion-Host UDP bridge is the official `transfer` node (Motion Host 192.168.1.1:43893 / telemetry 43897, AUTO mode); lite3_chassis is a topic bridge over it (ADR-0005)."
     - "The Orbbec Gemini 335 vendor driver (orbbec_camera) must be started before `rbnx boot`."
     - "The Livox MID-360S vendor driver (livox_ros_driver2) must be started before `rbnx boot`; both run in the same ROS 2 container/domain."
     - "URDF sensors (head camera + ultrasonics + lidar) are appended to the vendor body URDF; the vendor body URDF models only the quadruped."

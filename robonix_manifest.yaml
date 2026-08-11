@@ -33,14 +33,14 @@ primitive:
   - name: lite3_chassis
     path: ./primitives/lite3_chassis
     config:
-      # DeepRobotics factory topology: motion host 192.168.1.1, SDK/perception
-      # host 192.168.1.120. Commands → :43893, telemetry ← :43897 (ADR-0001).
-      robot_ip: 192.168.1.1
-      cmd_port: 43893
-      state_port: 43897
-      base_frame: base_link
+      # Topic-bridge mode (ADR-0005): the OFFICIAL DeepRobotics `transfer` node
+      # owns the Motion-Host UDP sockets (:43893/:43897, auto mode). lite3_chassis
+      # relays transfer's /leg_odom2 → /odom and publishes move() velocity bursts
+      # on /cmd_vel (which transfer forwards to the Motion Host).
+      odom_source: /leg_odom2
       odom_topic: /odom
       cmd_vel_topic: /cmd_vel
+      move_duration_sec: 1.0
 
   - name: lite3_camera
     path: ./primitives/lite3_camera
@@ -64,8 +64,10 @@ primitive:
       cy: 0.0
       base_frame: base_link
       cam_frame: head_camera_rgb_optical_frame
-      # First-frame sentinel: the Orbbec driver is racy on cold boot.
-      sentinel_timeout_s: 150
+      # First-frame sentinel: must stay BELOW soma's Driver(CMD_INIT) 90s
+      # hard timeout, or init is killed before it can finish. 150s was too
+      # long and made lite3_camera fail every boot.
+      sentinel_timeout_s: 60
 
   - name: lite3_lidar
     path: ./primitives/lite3_lidar

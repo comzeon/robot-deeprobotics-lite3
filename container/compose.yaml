@@ -15,6 +15,8 @@ name: ${COMPOSE_PROJECT_NAME:-robonix_lite3_ros}
 services:
   ros:
     container_name: ${ROBONIX_LITE3_CONTAINER:-robonix_lite3_ros}
+    # auto-restart on host reboot (watchdog + drivers stay up)
+    restart: unless-stopped
     build:
       context: ./
       dockerfile: Dockerfile
@@ -48,6 +50,10 @@ services:
       # Each primitive start.sh docker exec's python3 -m <driver> from the
       # /robonix_pkgs/primitives/<name> working dir.
       - ../:/robonix_pkgs:rw
+      # Override the baked-in /lite3_entrypoint.sh with the working-tree copy so
+      # the official `transfer` bridge (ADR-0005) and entrypoint fixes take
+      # effect WITHOUT rebuilding the image.
+      - ./entrypoint.sh:/lite3_entrypoint.sh:ro
       # robonix-api (the robonix repo's pylib) must be inside the container because
       # every driver does `from robonix_api import ...`. Resolve it through
       # ROBONIX_SOURCE_PATH (already required by the manifest's memory service) so

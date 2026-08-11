@@ -48,9 +48,7 @@ exec docker exec \
   -e ROBONIX_PKG_HOST_DIR="$(cd "$(dirname "$0")/.." && pwd)" \
   -e RBNX_INSTANCE_NAME="${RBNX_INSTANCE_NAME:-lite3_chassis}" \
   -e RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_zenoh_cpp}" \
-  -e LITE3_ROBOT_IP="${LITE3_ROBOT_IP:-192.168.1.1}" \
-  -e LITE3_BASE_FRAME="${LITE3_BASE_FRAME:-base_link}" \
-  -e PYTHONPATH="/robonix_pkgs/pylib/robonix-api:/robonix_pkgs/primitives/lite3_chassis/rbnx-build/codegen/proto_gen" \
+  -e PYTHONPATH="/robonix_pkgs/pylib/robonix-api:/robonix_pkgs/primitives/lite3_chassis/rbnx-build/codegen/proto_gen:/robonix_pkgs/primitives/lite3_chassis/rbnx-build/codegen/robonix_mcp_types" \
   "$LITE3_CT" \
   bash -lc 'set -eo pipefail
             set +u
